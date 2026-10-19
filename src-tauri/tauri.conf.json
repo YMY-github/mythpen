@@ -1,18 +1,18 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Mythpen",
+  "productName": "Mythpen Sync Dev",
   "version": "0.0.9",
-  "identifier": "com.mythpen.desktop",
+  "identifier": "community.mythpen.sync.dev",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "pnpm dev:all",
+    "beforeDevCommand": "pnpm dev:desktop",
     "beforeBuildCommand": "pnpm build"
   },
   "app": {
     "windows": [
       {
-        "title": "Mythpen",
+        "title": "Mythpen Sync Dev",
         "width": 1280,
         "height": 860,
         "minWidth": 900,
@@ -38,6 +38,9 @@
     ],
     "externalBin": [
       "binaries/mythpen-server"
-    ]
+    ],
+    "resources": {
+      "resources/sync-keyring/": "sync-keyring/"
+    }
   }
 }

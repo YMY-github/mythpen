@@ -1,3 +1,5 @@
+> **Community development branch — cloud sync is in progress.** Google connection, local snapshots, manual sync, auto-upload and conflict/history interfaces are integrated in the development preview; real Google and Windows verification are still pending. See [development status](docs/DEVELOPMENT_STATUS.zh.md) and [Google setup](docs/GOOGLE_SETUP.zh.md). Based on upstream v0.0.9; original license declarations are retained pending clarification.
+
 <p align="center">
   <img src="./logo.svg" alt="Mythpen" width="120" />
 </p>

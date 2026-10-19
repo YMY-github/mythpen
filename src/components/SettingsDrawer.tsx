@@ -1,5 +1,7 @@
 import { Bot, Download, Eye, EyeOff, Globe, Palette, Pen, RotateCw, SwatchBook, X, Zap } from 'lucide-react'
 import { useState } from 'react'
+import { CloudSyncPanel } from './CloudSyncPanel'
+import { BackupPanel } from './BackupPanel'
 import { useT } from '@/hooks/useT'
 import { refreshAllData } from '@/lib/dataEvents'
 import { useEditorStore } from '@/stores/useEditorStore'
@@ -28,21 +30,7 @@ export function SettingsDrawer() {
   const [releaseUrl, setReleaseUrl] = useState('')
 
   const checkForUpdates = async () => {
-    setUpdateStatus('checking')
-    try {
-      const res = await fetch('https://api.github.com/repos/niyongsheng/mythpen/releases/latest')
-      if (!res.ok) {
-        setUpdateStatus('error')
-        return
-      }
-      const data = await res.json()
-      const latestTag = (data.tag_name || '').replace(/^v/, '')
-      setLatestVersion(latestTag)
-      setReleaseUrl(data.html_url || `https://github.com/niyongsheng/mythpen/releases/tag/${data.tag_name}`)
-      setUpdateStatus(compareVersions(latestTag, __APP_VERSION__) > 0 ? 'available' : 'upToDate')
-    } catch {
-      setUpdateStatus('error')
-    }
+    setUpdateStatus('error')
   }
 
   const handleTestConnection = async () => {
@@ -117,6 +105,8 @@ export function SettingsDrawer() {
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 custom-scrollbar">
+          <CloudSyncPanel />
+          <BackupPanel />
           {/* ── UI Language ── */}
           <div className="mb-7 mt-5">
             <div className="text-[11px] font-medium text-[var(--ink-mute)] tracking-[0.06em] uppercase mb-3">

@@ -1,11 +1,11 @@
 // API client for Mythpen backend
-// Dev: /api is proxied by Vite to localhost:3001
-// Tauri production: sidecar server runs on 127.0.0.1:3001
+// Dev: /api is proxied by Vite to localhost:3101
+// Tauri production: sidecar server runs on 127.0.0.1:3101
 
 // In Tauri v2, __TAURI_INTERNALS__ is injected by the runtime automatically.
 // No npm package needed for this detection.
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-const API_BASE = isTauri ? 'http://127.0.0.1:3001/api' : '/api'
+const API_BASE = isTauri ? 'http://127.0.0.1:3101/api' : '/api'
 
 // Normalize double slashes (e.g. /api//stats → /api/stats) that happen
 // when a project name is empty. Skip the protocol colon so http:// stays.

@@ -1,0 +1,30 @@
+const router = require('express').Router();
+const local = require('../sync/local');
+const {SyncRuntime}=require('../sync/runtime');
+const runtime=new SyncRuntime();
+const wrap=fn=>async(req,res,next)=>{try{res.json(await fn(req));}catch(error){next(error);}};
+router.use((req,res,next)=> {
+  if(req.method!=='GET' && !req.is('application/json')) return res.status(415).json({error:{message:'JSON request required'}});
+  next();
+});
+router.get('/status',wrap(()=>runtime.status()));
+router.post('/configure',wrap(req=>runtime.configure(req.body)));
+router.post('/connect',wrap(()=>runtime.connect()));
+router.post('/disconnect',wrap(()=>runtime.disconnect()));
+router.get('/cloud-projects',wrap(async()=> (await runtime.activate()).discover()));
+router.post('/import',wrap(async req=> (await runtime.activate()).import(req.body.projectId,req.body.revisionId,req.body.name)));
+router.get('/projects/:name/status',wrap(async req=> (await runtime.activate()).status(req.params.name)));
+router.post('/projects/:name/enable',wrap(async req=> (await runtime.activate()).enable(req.params.name,req.body.auto)));
+router.post('/projects/:name/disable',wrap(async req=> (await runtime.activate()).disable(req.params.name)));
+router.post('/projects/:name/sync',wrap(async req=> (await runtime.activate()).sync(req.params.name)));
+router.get('/projects/:name/history',wrap(async req=> (await runtime.activate()).history(req.params.name)));
+router.post('/projects/:name/apply',wrap(async req=> (await runtime.activate()).apply(req.params.name,req.body.revisionId,req.body.expectedHash,req.body.choice)));
+router.post('/projects/:name/resolve-local',wrap(async req=> (await runtime.activate()).resolveLocal(req.params.name,req.body.expectedHash)));
+router.get('/projects/:name/backups',wrap(req=>local.listBackups(req.params.name)));
+router.post('/projects/:name/backups',wrap(req=> {
+  const snapshot=local.capture(req.params.name);local.saveBackup(snapshot);
+  return {revisionId:snapshot.revisionId,createdAt:snapshot.createdAt};
+}));
+router.use((error,req,res,next)=>res.status(400).json({error:{message:error.message,recoverable:true}}));
+router.runtime=runtime;
+module.exports=router;

@@ -1,113 +1,114 @@
-use std::io::Write;
-use std::sync::Mutex;
+use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::Manager;
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
-use tauri_plugin_shell::process::CommandChild;
 
-/// Managed state holding the sidecar child process handle.
-/// Stored so we can kill the Express server on app exit.
-struct SidecarProcess(Mutex<Option<CommandChild>>);
-
-/// Poll the Express server port until it responds, or timeout.
-fn wait_for_server(port: u16, timeout_secs: u64) -> bool {
-    let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
-    while std::time::Instant::now() < deadline {
-        if TcpStream::connect_timeout(
-            &format!("127.0.0.1:{port}").parse().unwrap(),
-            Duration::from_millis(500),
-        )
-        .is_ok()
-        {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-    false
+struct SidecarProcess {
+    child: Mutex<Option<CommandChild>>,
+    status: Mutex<String>,
+    shutdown_token: String,
 }
 
-/// Send an HTTP POST request to the server's graceful shutdown endpoint.
-/// Returns true if the request was sent (server may still be shutting down).
-fn request_graceful_shutdown(port: u16) -> bool {
-    let body = "{}";
-    let request = format!(
-        "POST /api/shutdown HTTP/1.1\r\n\
-         Host: 127.0.0.1:{port}\r\n\
-         Content-Type: application/json\r\n\
-         Content-Length: {}\r\n\
-         Connection: close\r\n\
-         \r\n\
-         {}",
-        body.len(),
-        body
-    );
+#[tauri::command]
+fn sidecar_status(state: tauri::State<'_, SidecarProcess>) -> String {
+    state.status.lock().unwrap().clone()
+}
 
-    match TcpStream::connect_timeout(
-        &format!("127.0.0.1:{port}").parse().unwrap(),
-        Duration::from_millis(1000),
-    ) {
-        Ok(mut stream) => {
-            let _ = stream.write_all(request.as_bytes());
-            // Don't wait for response — the server is shutting down
-            true
-        }
-        Err(_) => {
-            // Server already gone or port not reachable
-            false
-        }
-    }
+fn server_request(method: &str, route: &str, token: &str) -> Option<String> {
+    let mut stream = TcpStream::connect_timeout(
+        &"127.0.0.1:3101".parse().unwrap(),
+        Duration::from_millis(500),
+    ).ok()?;
+    stream.set_read_timeout(Some(Duration::from_millis(500))).ok()?;
+    stream.set_write_timeout(Some(Duration::from_millis(500))).ok()?;
+    let body = if method == "POST" { "{}" } else { "" };
+    write!(stream,
+        "{method} {route} HTTP/1.1\r\nHost: 127.0.0.1:3101\r\nX-Mythpen-Sidecar-Token: {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    ).ok()?;
+    let mut response = String::new();
+    stream.take(8192).read_to_string(&mut response).ok()?;
+    Some(response)
+}
+
+fn owned_server_ready(token: &str) -> bool {
+    server_request("GET", "/api/health", token)
+        .is_some_and(|response| response.starts_with("HTTP/1.1 200") && response.contains("\"sidecarOwned\":true"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .invoke_handler(tauri::generate_handler![sidecar_status])
         .setup(|app| {
-            // Spawn the Express server as a sidecar process
-            let sidecar = app.shell().sidecar("mythpen-server").unwrap();
-            let (_rx, child) = sidecar.spawn().expect("Failed to spawn mythpen-server sidecar");
-
-            // Store child handle in app state so it lives for the app's lifetime
-            // and can be killed on exit (fixes Windows "file in use" on upgrade)
-            app.manage(SidecarProcess(Mutex::new(Some(child))));
-
-            // Wait for server in background thread — don't block setup().
-            // The frontend's ServerStatusGate will poll independently, so the
-            // window shows immediately even on slow first-start (Windows AV scan).
-            // Timeout doubled to 30s for first-run scenarios.
-            std::thread::spawn(|| {
-                if !wait_for_server(3001, 30) {
-                    eprintln!("Warning: mythpen-server did not start within 30 seconds");
+            let token = uuid::Uuid::new_v4().to_string();
+            app.manage(SidecarProcess {
+                child: Mutex::new(None),
+                status: Mutex::new("starting".into()),
+                shutdown_token: token.clone(),
+            });
+            let state = app.state::<SidecarProcess>();
+            if TcpStream::connect_timeout(&"127.0.0.1:3101".parse().unwrap(), Duration::from_millis(500)).is_ok() {
+                // tauri dev deliberately uses the beforeDevCommand server.
+                *state.status.lock().unwrap() = if cfg!(debug_assertions) { "ready" } else { "port-in-use" }.into();
+                return Ok(());
+            }
+            let keyring_path = app.path().resource_dir()?.join("sync-keyring").join("index.js");
+            let command = app.shell().sidecar("mythpen-server")?
+                .env("MYTHPEN_KEYRING_DIR", keyring_path.to_string_lossy().to_string())
+                .env("MYTHPEN_SIDECAR_TOKEN", &token);
+            let (mut events, child) = match command.spawn() {
+                Ok(child) => child,
+                Err(_) => {
+                    *state.status.lock().unwrap() = "start-failed".into();
+                    return Ok(());
+                }
+            };
+            *state.child.lock().unwrap() = Some(child);
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                while let Some(event) = events.recv().await {
+                    if matches!(event, CommandEvent::Terminated(_)) {
+                        *app_handle.state::<SidecarProcess>().status.lock().unwrap() = "exited".into();
+                        break;
+                    }
                 }
             });
-
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_secs(45);
+                while Instant::now() < deadline {
+                    let state = app_handle.state::<SidecarProcess>();
+                    if *state.status.lock().unwrap() != "starting" { return; }
+                    if owned_server_ready(&token) {
+                        *state.status.lock().unwrap() = "ready".into();
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+                let state = app_handle.state::<SidecarProcess>();
+                let mut status = state.status.lock().unwrap();
+                if *status == "starting" { *status = "start-failed".into(); }
+            });
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building tauri application")
+        .expect("error while building Mythpen Sync Dev")
         .run(|app_handle, event| {
-            // Graceful sidecar shutdown on app exit.
-            //
-            // Step 1: Send HTTP POST to /api/shutdown so Express cleans up normally.
-            // Step 2: Wait briefly for the graceful shutdown to complete.
-            // Step 3: Force kill as a safety net (for Windows upgrade binary overwrite).
-            //
-            // This three-step strategy avoids triggering antivirus software that flags
-            // SIGKILL/TerminateProcess as suspicious behavior.
             if let tauri::RunEvent::Exit = event {
                 if let Some(state) = app_handle.try_state::<SidecarProcess>() {
-                    if let Ok(mut guard) = state.0.lock() {
-                        if let Some(child) = guard.take() {
-                            // Step 1: Request graceful shutdown via HTTP
-                            request_graceful_shutdown(3001);
-
-                            // Step 2: Give the server time to close gracefully
-                            std::thread::sleep(Duration::from_millis(2000));
-
-                            // Step 3: Force kill as safety net
-                            let _ = child.kill();
+                    if let Some(child) = state.child.lock().unwrap().take() {
+                        // Only the process started by this window accepts its token.
+                        let _ = server_request("POST", "/api/shutdown", &state.shutdown_token);
+                        for _ in 0..10 {
+                            if !owned_server_ready(&state.shutdown_token) { break; }
+                            std::thread::sleep(Duration::from_millis(200));
                         }
+                        let _ = child.kill();
                     }
                 }
             }

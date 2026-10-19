@@ -699,7 +699,7 @@ router.get('/:project/export', async (req, res) => {
   db.projectQuery(pn, 'SELECT key, value FROM project_meta').forEach(m => meta[m.key] = m.value);
 
   const totalWords = chapters.reduce((s, c) => s + (c.content?.replace(/\s/g, '').length || 0), 0);
-  const EXPORT_DIR = path.join(require('os').homedir(), '.mythpen', 'exports', pn);
+  const EXPORT_DIR = path.join(db.DB_DIR, 'exports', pn);
   if (!fs.existsSync(EXPORT_DIR)) fs.mkdirSync(EXPORT_DIR, { recursive: true });
 
   // Find cover image

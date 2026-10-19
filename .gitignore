@@ -30,3 +30,6 @@ src-tauri/binaries/
 
 # WASM copied by scripts/copy-wasm.mjs for bun --compile --assets
 server/sql-wasm.wasm
+
+# Native credential resources are generated per build platform
+src-tauri/resources/sync-keyring/

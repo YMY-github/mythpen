@@ -346,6 +346,8 @@
   "serverStatus": {
     "timeout": "Connection timed out",
     "startFailed": "Server failed to start",
+    "portInUse": "Another sync development app or preview is running. Close it, then reopen this app.",
+    "processExited": "The sync service could not start. Quit and reopen the app.",
     "starting": "Starting",
     "retry": "Retry",
     "quit": "Quit"

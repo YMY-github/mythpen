@@ -151,7 +151,8 @@ export const useChapterStore = create<ChapterState>((set) => ({
         await useChapterStore.getState().loadChapterContent(project, num, currentAfterSave.volumeId)
       }
     } catch (err) {
-      console.error('Failed to update chapter:', err)
+      set({ saveStatus: 'unsaved' })
+      throw err
     }
   },
 

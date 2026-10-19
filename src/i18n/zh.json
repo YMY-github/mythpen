@@ -346,6 +346,8 @@
   "serverStatus": {
     "timeout": "连接超时",
     "startFailed": "服务器启动失败",
+    "portInUse": "另一个同步开发版或网页预览正在运行，请先关闭它，再重新打开此应用。",
+    "processExited": "同步程序未能正常启动，请退出应用后重新打开。",
     "starting": "正在启动",
     "retry": "重试",
     "quit": "退出"

@@ -5,7 +5,7 @@
 const path = require('path');
 const fs = require('fs');
 
-const DB_DIR = path.join(require('os').homedir(), '.mythpen');
+const DB_DIR = process.env.MYTHPEN_DATA_DIR || path.join(require('os').homedir(), '.mythpen-sync-dev');
 const CONFIG_DB = path.join(DB_DIR, 'config.db');
 const PROJECTS_DIR = path.join(DB_DIR, 'projects');
 
@@ -15,6 +15,12 @@ if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR, { recursive: true }
 
 let SQL;         // set by initDatabase()
 let configDb;    // wrapped config database
+const projectChangeListeners = new Set();
+function notifyProjectChanged(filePath) {
+  if (path.dirname(filePath) !== PROJECTS_DIR || !filePath.endsWith('.mythpen.db')) return;
+  const name=path.basename(filePath,'.mythpen.db');
+  for (const listener of projectChangeListeners) { try { listener(name); } catch { /* A sync observer cannot break local persistence. */ } }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Schema versioning — bump these when adding migrations
@@ -37,7 +43,9 @@ function _loadDb(filePath) {
 
 function _flushDb(db, filePath) {
   const data = db.export();
-  fs.writeFileSync(filePath, Buffer.from(data));
+  const temp = `${filePath}.tmp`;
+  fs.writeFileSync(temp, Buffer.from(data), { mode: 0o600 });
+  fs.renameSync(temp, filePath);
 }
 
 // ─── Named-param helper ───
@@ -91,12 +99,13 @@ function _wrapDb(db, filePath) {
   function _flushSync() {
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
     if (!dirty) return;
-    dirty = false;
     _flushDb(db, filePath);
+    dirty = false;
   }
 
   function _scheduleFlush() {
     dirty = true;
+    notifyProjectChanged(filePath);
     if (!flushTimer) {
       flushTimer = setTimeout(() => {
         flushTimer = null;
@@ -108,6 +117,7 @@ function _wrapDb(db, filePath) {
   return {
     _db: db,
     _path: filePath,
+    exportBytes() { _flushSync(); return Buffer.from(db.export()); },
 
     pragma(sql) {
       db.run('PRAGMA ' + sql);
@@ -368,6 +378,7 @@ function migrateConfig(db) {
 const projectConnections = new Map();
 
 function getProjectDbPath(name) {
+  validateProjectName(name);
   return path.join(PROJECTS_DIR, `${name}.mythpen.db`);
 }
 
@@ -662,6 +673,7 @@ function recalculateWordCount(projectName) {
 }
 
 function getCoverDir(projectName) {
+  validateProjectName(projectName);
   return path.join(PROJECTS_DIR, projectName);
 }
 
@@ -678,7 +690,39 @@ function findCoverPath(projectName) {
 const MIME_TO_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
 const EXT_TO_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
 
+function validateProjectName(name) {
+  if (typeof name !== 'string' || !name.trim() || name.length > 120 || /[\\/:*?"<>|\x00-\x1f]/.test(name) || /[. ]$/.test(name) || /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i.test(name)) throw new Error('Invalid project name');
+}
+function validateProjectBytes(bytes, projectId) {
+  const database = new SQL.Database(bytes);
+  try {
+    if (database.exec('PRAGMA integrity_check')[0]?.values[0]?.[0] !== 'ok') throw new Error('Database integrity check failed');
+    const version = database.exec("SELECT value FROM project_meta WHERE key = 'schema_version'")[0]?.values[0]?.[0];
+    const id = database.exec("SELECT value FROM project_meta WHERE key = 'sync_project_id'")[0]?.values[0]?.[0];
+    if (Number(version) !== PROJECT_SCHEMA_VERSION || id !== projectId) throw new Error('Database identity or schema mismatch');
+  } finally { database.close(); }
+}
+
 module.exports = {
+  DB_DIR,
+  onProjectChanged(listener) { projectChangeListeners.add(listener); return () => projectChangeListeners.delete(listener); },
+  projectExists(name) { const file = getProjectDbPath(name); return fs.existsSync(file) || projectConnections.has(file); },
+  projectMetaFromBytes(bytes) {
+    const database=new SQL.Database(bytes);
+    try {
+      return Object.fromEntries(database.exec('SELECT key,value FROM project_meta')[0]?.values || []);
+    } finally {database.close();}
+  },
+  transformProjectBytes(bytes, name, id) {
+    const database = new SQL.Database(bytes);
+    try {
+      database.run("INSERT OR REPLACE INTO project_meta (key,value) VALUES ('name',?)", [name]);
+      if (id) database.run("INSERT OR REPLACE INTO project_meta (key,value) VALUES ('sync_project_id',?)", [id]);
+      return Buffer.from(database.export());
+    } finally { database.close(); }
+  },
+  validateProjectBytes,
+  validateProjectName,
   initDatabase,
   getConfigDb,
   getProjectDb,

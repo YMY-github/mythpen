@@ -1,8 +1,9 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { useT } from '@/hooks/useT'
 
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-const API_BASE = isTauri ? 'http://127.0.0.1:3001/api' : '/api'
+const API_BASE = isTauri ? 'http://127.0.0.1:3101/api' : '/api'
 const HEALTH_URL = `${API_BASE}/health`
 
 const MAX_RETRIES = 20
@@ -26,6 +27,16 @@ export function ServerStatusGate({ children }: Props) {
 
     const check = async () => {
       try {
+        if (isTauri) {
+          const desktop = await invoke<string>('sidecar_status')
+          if (cancelled) return
+          if (desktop === 'port-in-use' || desktop === 'start-failed' || desktop === 'exited') {
+            setDetail(t(desktop === 'port-in-use' ? 'serverStatus.portInUse' : 'serverStatus.processExited'))
+            setStatus('error')
+            return
+          }
+          if (desktop !== 'ready') throw new Error(t('serverStatus.starting'))
+        }
         const res = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(3000) })
         if (cancelled) return
         if (res.ok) {

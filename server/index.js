@@ -9,10 +9,16 @@ const { buildWritingPrompt } = require('./prompts/writing');
 const { buildCollabPrompt } = require('./prompts/collab');
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3101;
 
 // ─── Middleware ───
-app.use(cors());
+const allowedOrigins = new Set(['http://localhost:5173','http://127.0.0.1:5173','http://localhost:5174','http://127.0.0.1:5174','tauri://localhost','http://tauri.localhost','https://tauri.localhost']);
+app.use((req,res,next) => {
+  const origin=req.get('Origin');
+  if (origin && !allowedOrigins.has(origin)) return res.status(403).json({error:{message:'Origin not allowed'}});
+  next();
+});
+app.use(cors({origin:(origin,done)=>done(null,!origin || allowedOrigins.has(origin))}));
 app.use(express.json({ limit: '10mb' }));
 
 // ─── Request logging ───
@@ -26,7 +32,23 @@ app.use((req, res, next) => {
   next();
 });
 
+// Protect atomic recovery against a running AI stream or mutation request.
+let activeMutations = 0;
+require('./routes/sync').runtime.canApply = () => activeMutations === 0;
+app.use((req,res,next) => {
+  if (!req.path.startsWith('/api/sync') && ['POST','PUT','PATCH','DELETE'].includes(req.method)) {
+    ++activeMutations; let done=false;
+    const finish=()=>{if(!done){done=true;--activeMutations;}};
+    res.once('finish',finish);res.once('close',finish);
+  }
+  next();
+});
+app.use('/api/sync', (req,res,next) => {
+  if (activeMutations && /\/(apply|import)$/.test(req.path)) return res.status(409).json({error:{message:'Writing or AI generation is still in progress'}});
+  next();
+});
 // ─── API Routes ───
+app.use('/api/sync', require('./routes/sync'));
 app.use('/api', apiRoutes);
 
 // ═══════════════════════════════════════════
@@ -322,11 +344,14 @@ app.post('/api/ai/continue', async (req, res) => {
 
 // ─── Health check ───
 app.get('/api/health', (req, res) => {
+  const startupToken = req.get('X-Mythpen-Sidecar-Token');
+  if (startupToken && startupToken !== process.env.MYTHPEN_SIDECAR_TOKEN) return res.status(401).json({error:{message:'Wrong desktop server'}});
   res.json({
     status: 'ok',
     db: 'connected',
     version: '0.1.0',
     mode: 'development',
+    sidecarOwned: !!startupToken && startupToken === process.env.MYTHPEN_SIDECAR_TOKEN,
   });
 });
 
@@ -336,6 +361,7 @@ let serverInstance = null;
 
 function gracefulShutdown() {
   console.log('\n  🛑 Shutting down Mythpen API Server gracefully...');
+  require('./routes/sync').runtime.stop();
   if (serverInstance) {
     serverInstance.close(() => {
       console.log('  ✓ Server closed.');
@@ -352,6 +378,7 @@ function gracefulShutdown() {
 }
 
 app.post('/api/shutdown', (req, res) => {
+  if (process.env.MYTHPEN_SIDECAR_TOKEN && req.get('X-Mythpen-Sidecar-Token') !== process.env.MYTHPEN_SIDECAR_TOKEN) return res.status(401).json({error:{message:'Desktop shutdown authorization required'}});
   res.json({ status: 'shutting_down' });
   setImmediate(() => gracefulShutdown());
 });
@@ -371,7 +398,9 @@ console.log('[Server] Mythpen API Server starting...');
 console.log('[Server] Port:', PORT);
 initDatabase()
   .then(() => {
-    serverInstance = app.listen(PORT, () => {
+    require('./sync/local').recoverPending();
+    require('./routes/sync').runtime.start();
+    serverInstance = app.listen(PORT, '127.0.0.1', () => {
       const cfg = getAiConfig();
       const elapsed = Date.now() - serverStartTime;
       console.log(`\n  🖋️  Mythpen API Server`);

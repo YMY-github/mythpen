@@ -35,7 +35,7 @@ export function EditorContent() {
 
   // Convert inline markers to HTML
   function inlineToHtml(text: string): string {
-    return text
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
       .replace(/\*(.+?)\*/g, '<i>$1</i>')
       .replace(/__(.+?)__/g, '<u>$1</u>')
@@ -113,27 +113,22 @@ export function EditorContent() {
     if (!pn || !ch || !chNum || !editorRef.current) return
 
     const html = editorRef.current.innerHTML
-    const textContent = editorRef.current.textContent?.trim() || ''
-
-    // Skip if empty
-    if (textContent === '') {
-      if (ch.content) {
-        await updateChapter(pn, chNum, { content: '' })
-      }
-      lastSavedContentRef.current = ''
-      setIsDirty(false)
-      return
-    }
-
-    const markdown = extractContent(html)
-    if (markdown !== lastSavedContentRef.current) {
-      setSaveStatus('saving')
+    const markdown = editorRef.current.textContent?.trim() ? extractContent(html) : ''
+    if (markdown === lastSavedContentRef.current) return
+    setSaveStatus('saving')
+    try {
       await updateChapter(pn, chNum, { content: markdown })
+      if (useProjectStore.getState().currentProject !== pn || useChapterStore.getState().currentChapter?.id !== ch.id) return
       lastSavedContentRef.current = markdown
       hasSavedRef.current = true
-      setSaveStatus('saved')
+      const current = editorRef.current?.textContent?.trim() ? extractContent(editorRef.current.innerHTML) : ''
+      const changed = current !== markdown
+      setIsDirty(changed)
+      setSaveStatus(changed ? 'unsaved' : 'saved')
+    } catch {
+      setIsDirty(true)
+      setSaveStatus('unsaved')
     }
-    setIsDirty(false)
   }, [updateChapter, setSaveStatus]) // no longer depends on chapter/currentProject
 
   // Debounced auto-save — reads autoSaveInterval from settings
@@ -229,13 +224,16 @@ export function EditorContent() {
 
   const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setTitleDraft(e.target.value)
-  }, [])
+    setSaveStatus('unsaved')
+  }, [setSaveStatus])
 
   const handleTitleSave = useCallback(async () => {
     setEditingTitle(false)
     if (!currentProject || !chapter || !titleDraft.trim() || titleDraft.trim() === chapter.title) return
-    await updateChapter(currentProject, chapter.num, { title: titleDraft.trim() })
-  }, [currentProject, chapter, titleDraft, updateChapter])
+    setSaveStatus('saving')
+    try { await updateChapter(currentProject, chapter.num, { title: titleDraft.trim() }); setSaveStatus('saved') }
+    catch { setSaveStatus('unsaved') }
+  }, [currentProject, chapter, titleDraft, updateChapter, setSaveStatus])
 
   const handleTitleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
