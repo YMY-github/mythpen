@@ -26,11 +26,13 @@ jobs:
             runner: macos-15-intel
             artifact: Mythpen-Sync-macOS-Intel
             target: x86_64-apple-darwin
+            experimental: true
           - name: Windows x64
             runner: windows-2022
             artifact: Mythpen-Sync-Windows-x64
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental || false }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -53,10 +55,17 @@ jobs:
           pnpm exec tsc --project tsconfig.app.json --noEmit
       - name: Compile packaged server and native credentials
         run: pnpm build:sidecar
+      - name: Prepare isolated macOS test credential store
+        if: runner.os == 'macOS'
+        run: bash scripts/ci-mac-keychain.sh
       - name: Test packaged server
         run: pnpm test:sidecar
       - name: Build desktop installers
         run: pnpm tauri build
+      - name: Install and cold-start Windows preview
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-windows-install.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

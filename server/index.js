@@ -8,6 +8,7 @@ const { createAIAdapter } = require('./ai-adapter');
 const { buildWritingPrompt } = require('./prompts/writing');
 const { buildCollabPrompt } = require('./prompts/collab');
 
+const safeFailure = error => ({ status: Number.isInteger(error?.status) ? error.status : null, type: /^[A-Za-z]{1,40}$/.test(error?.name || '') ? error.name : 'Error' });
 const app = express();
 const PORT = process.env.PORT || 3101;
 
@@ -27,7 +28,7 @@ app.use((req, res, next) => {
   res.on('finish', () => {
     const ms = Date.now() - start;
     if (req.path.startsWith('/api/ai')) return; // don't log AI streaming
-    console.log(`${req.method} ${req.path} ${res.statusCode} ${ms}ms`);
+    console.log(`${req.method} ${req.route?.path || '/api'} ${res.statusCode} ${ms}ms`);
   });
   next();
 });
@@ -44,7 +45,7 @@ app.use((req,res,next) => {
   next();
 });
 app.use('/api/sync', (req,res,next) => {
-  if (activeMutations && /\/(apply|import)$/.test(req.path)) return res.status(409).json({error:{message:'Writing or AI generation is still in progress'}});
+  if (activeMutations && /\/(apply|import|restore)$/.test(req.path)) return res.status(409).json({error:{code:'changed',message:'Writing or AI generation is still in progress'}});
   next();
 });
 // ─── API Routes ───
@@ -122,7 +123,7 @@ app.post('/api/ai/chat', async (req, res) => {
           ['chat', result.usage.inputTokens, result.usage.outputTokens, aiConfig.apiModel]
         );
       } catch(e) {
-          console.warn('[AI Chat] Failed to record token usage:', e.message);
+          console.warn('[AI Chat] Failed to record token usage:', safeFailure(e));
         }
     }
 
@@ -131,7 +132,7 @@ app.post('/api/ai/chat', async (req, res) => {
       usage: { prompt_tokens: result.usage.inputTokens, completion_tokens: result.usage.outputTokens },
     });
   } catch (err) {
-    console.error('AI chat error:', err);
+    console.error('AI chat error:', safeFailure(err));
     res.status(500).json({ error: err.message });
   }
 });
@@ -212,7 +213,7 @@ app.post('/api/ai/chat/stream', async (req, res) => {
             toolResult = { error: e.message };
           }
 
-          console.log(`[AI Stream] Tool ${tc.name}:`, JSON.stringify(toolResult).slice(0, 200));
+          console.log(`[AI Stream] Tool ${tc.name}:`, {completed:true});
 
           // Notify frontend: tool result
           res.write(`event: tool_result\ndata: ${JSON.stringify({ id: tc.id, name: tc.name, result: toolResult })}\n\n`);
@@ -241,14 +242,14 @@ app.post('/api/ai/chat/stream', async (req, res) => {
         ['stream_chat', inputTokens, outputTokens, aiConfig.apiModel]
       );
         } catch(e) {
-          console.warn('[AI Stream] Failed to record token usage:', e.message);
+          console.warn('[AI Stream] Failed to record token usage:', safeFailure(e));
         }
 
         res.write(`event: task_end\ndata: ${JSON.stringify({ success: true, content: fullContent, inputTokens, outputTokens })}\n\n`);
     res.end();
 
   } catch (err) {
-    console.error('AI stream error:', err);
+    console.error('AI stream error:', safeFailure(err));
     if (!res.headersSent) {
       res.status(500).json({ error: err.message });
     } else {
@@ -297,7 +298,7 @@ app.post('/api/ai/continue', async (req, res) => {
         }
       }
     } catch (err) {
-      console.error('Continue stream error:', err);
+      console.error('Continue stream error:', safeFailure(err));
       res.write(`event: error\ndata: ${JSON.stringify({ error: err.message })}\n\n`);
       res.end();
       return;
@@ -316,7 +317,7 @@ app.post('/api/ai/continue', async (req, res) => {
         // Recalculate project word count
         const total = db.projectGet(project, 'SELECT SUM(word_count) as total FROM chapters')?.total || 0;
         db.projectExecute(project, "UPDATE project_meta SET value = ? WHERE key = 'word_count'", [String(total)]);
-      } catch(e) { console.error('Save error:', e); }
+      } catch(e) { console.error('Save error:', safeFailure(e)); }
     }
 
     // Record token usage
@@ -326,13 +327,13 @@ app.post('/api/ai/continue', async (req, res) => {
         ['continue', inputTokens, outputTokens, aiConfig.apiModel]
       );
       } catch(e) {
-        console.warn('[AI Continue] Failed to record token usage:', e.message);
+        console.warn('[AI Continue] Failed to record token usage:', safeFailure(e));
       }
 
       res.write(`event: task_end\ndata: ${JSON.stringify({ success: true, content: fullContent })}\n\n`);
     res.end();
   } catch (err) {
-    console.error('Continue error:', err);
+    console.error('Continue error:', safeFailure(err));
     if (!res.headersSent) {
       res.status(500).json({ error: err.message });
     } else {
@@ -407,12 +408,12 @@ initDatabase()
       console.log(`  ─────────────────────`);
       console.log(`  Local:   http://localhost:${PORT}`);
       console.log(`  Health:  http://localhost:${PORT}/api/health`);
-      console.log(`  AI:      ${cfg.apiModel} @ ${cfg.apiBaseUrl}`);
+      console.log('  AI:      Local configuration loaded');
       console.log(`  Startup: ${elapsed}ms`);
       console.log(`\n  Ready.\n`);
     });
   })
   .catch(err => {
-    console.error('❌ Failed to initialise database:', err);
+    console.error('❌ Failed to initialise database:', safeFailure(err));
     process.exit(1);
   });

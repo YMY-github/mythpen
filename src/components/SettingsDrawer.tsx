@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { CloudSyncPanel } from './CloudSyncPanel'
 import { BackupPanel } from './BackupPanel'
 import { useT } from '@/hooks/useT'
+import { apiUrl } from '@/lib/api'
 import { refreshAllData } from '@/lib/dataEvents'
 import { useEditorStore } from '@/stores/useEditorStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -38,7 +39,7 @@ export function SettingsDrawer() {
     setTestError('')
     const start = Date.now()
     try {
-      const res = await fetch('/api/ai/chat', {
+      const res = await fetch(apiUrl('/ai/chat'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -1,4 +1,4 @@
-> **Community development branch — cloud sync is in progress.** Google connection, local snapshots, manual sync, auto-upload and conflict/history interfaces are integrated in the development preview; real Google and Windows verification are still pending. See [development status](docs/DEVELOPMENT_STATUS.zh.md) and [Google setup](docs/GOOGLE_SETUP.zh.md). Based on upstream v0.0.9; original license declarations are retained pending clarification.
+> **Community development preview — Mythpen Sync Dev.** Adds Google Drive private-space sync, optional auto-upload, conflict copies, cloud history, offline local restore, status indicators and explicitly confirmed history cleanup. Mac ARM real Drive roundtrips and restart credentials are verified. Windows installer builds and automated core/native credential tests are verified; physical-device Google sign-in remains to be tested. Based on upstream v0.0.9; original license declarations are retained pending clarification. See [development status](docs/DEVELOPMENT_STATUS.zh.md), [build and device tests](docs/DESKTOP_BUILD.zh.md), [Google setup](docs/GOOGLE_SETUP.zh.md), and [sync rules](docs/SYNC_DESIGN.zh.md).
 
 <p align="center">
   <img src="./logo.svg" alt="Mythpen" width="120" />
@@ -26,32 +26,32 @@
 
 - **AI Writing** — Two modes: *Writing* (guided 6-step workflow) and *Collab* (AI co-writer). Supports OpenAI and Claude.
 - **Novel Management** — Characters, world-building, chapters, foreshadowing, timeline, and relations — all in one place.
-- **Local-First** — Data stored in SQLite under `~/.mythpen/`. No cloud required, full privacy.
+- **Local-First** — Preview data stored in SQLite under `~/.mythpen-sync-dev/`. Cloud sync is optional.
 - **Rich Editor** — Bold, italic, underline via keyboard shortcuts. Chapters auto-save locally.
 - **Cross-Platform** — Tauri v2 for native desktop experience, also runs in browser for development.
 
 ## Prerequisites
 
-- **Node.js** >= 20
-- **pnpm** >= 9
+- **Node.js** 24
+- **pnpm** 10.10.0
 
 ## Quick Start
 
 ```bash
 pnpm install        # Install dependencies
-pnpm dev:all        # Start in browser (frontend + backend + seed data)
+pnpm dev:all        # Start in browser (frontend + backend; no automatic seed)
 pnpm tauri dev      # Desktop development mode
-pnpm tauri build    # Build desktop installer (.dmg/.msi/.AppImage)
+pnpm tauri build    # Build desktop installer (.dmg/.msi/NSIS; Windows x64 and macOS preview)
 ```
 
 ## Tech Stack
 
-**Frontend**: React 19 + TypeScript 5 + Zustand  
-**Backend**: Express 5 + better-sqlite3  
-**Desktop**: Tauri v2  
-**AI**: OpenAI-compatible  
+**Frontend**: React 19 + TypeScript + Zustand
+**Backend**: Express 5 + sql.js
+**Desktop**: Tauri v2
+**AI**: OpenAI-compatible
 
-> [!TIP]  
+> [!TIP]
 > Prefer Claude Code's workflow? Check out [clark-typer](https://github.com/niyongsheng/clark-typer).
 
 ## License

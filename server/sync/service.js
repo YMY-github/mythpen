@@ -3,7 +3,9 @@ const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const db = require('../db');
 const local = require('./local');
-const { decideSync, findHeads, validateSnapshot } = require('./snapshot');
+const { decideGraph:decideSync, graphHeads:findHeads, validateSnapshot,hash } = require('./snapshot');
+const {planRetention}=require('./retention');
+const {retryable,category}=require('./errors');
 
 class SyncService {
   constructor({ store, accountId, stateFile, isActive = () => true, canApply = () => true }) {
@@ -26,13 +28,26 @@ class SyncService {
     this.check();
     const files = await this.store.listFiles(projectId);
     this.check();
-    const revisions=[];let total=0;
-    for (const file of files) { const revision=await this.store.download(file);total+=revision.files.reduce((n,f)=>n+f.size,0);if(total>256*1024*1024) throw new Error('Cloud history exceeds the current preview limit');revisions.push(revision); this.check(); }
+    const byId=new Map();
+    for (const file of new Map(files.map(file=>[file.id,file])).values()) {
+      const revision=await this.store.download(file);validateSnapshot(revision);this.check();
+      const fingerprint=hash(JSON.stringify(revision)),previous=byId.get(revision.revisionId);
+      if(previous && previous.fingerprint!==fingerprint) throw new Error('Revision identity collision');
+      if(!previous) byId.set(revision.revisionId,{projectId:revision.projectId,revisionId:revision.revisionId,parents:revision.parents,
+        createdAt:revision.createdAt,deviceId:revision.deviceId,contentHash:revision.contentHash,
+        files:revision.files.map(({name,size,sha256})=>({name,size,sha256})),file,fingerprint});
+    }
+    const revisions=[...byId.values()];
     findHeads(revisions); return revisions;
+  }
+  async downloadRevision(revision) {
+    const snapshot=await this.store.download(revision.file);validateSnapshot(snapshot);this.check();
+    if(hash(JSON.stringify(snapshot))!==revision.fingerprint) throw new Error('Remote revision changed after validation');
+    return snapshot;
   }
   status(name) {
     const snapshot=local.capture(name), baseline=this.state.projects[snapshot.projectId];
-    return {enabled:!!baseline?.enabled,auto:!!baseline?.auto,busy:this.running.has(name),currentHash:snapshot.contentHash,lastSync:baseline?.lastSync || null,...this.results.get(name)};
+    return {enabled:!!baseline?.enabled,auto:!!baseline?.auto,busy:this.running.has(name),currentHash:snapshot.contentHash,lastSync:baseline?.lastSync || null,...this.results.get(name),pending:!!baseline?.enabled && baseline.hash!==snapshot.contentHash};
   }
   enable(name, auto=false) {
     this.check();const snapshot=local.capture(name);
@@ -78,13 +93,40 @@ class SyncService {
         this.failures.delete(name);this.results.set(name,result);return result;
       } catch(error) {
         const attempts=(this.failures.get(name) || 0)+1;this.failures.set(name,attempts);
-        const requiresAction=error.retryable===false || ['Local project changed','Account disconnected'].some(text=>error.message.includes(text));
+        const requiresAction=!retryable(error);
         const retryAt=Date.now()+Math.min(300000,30000*2**Math.min(attempts-1,4))*(1+Math.random()*0.2);
-        this.results.set(name,{action:'error',message:error.message,requiresAction,retryAt});throw error;
+        this.results.set(name,{action:'error',errorCode:category(error),requiresAction,retryAt});throw error;
       }
     });
   }
   async history(name) {return (await this.revisions(local.capture(name).projectId)).map(s=>this.metadata(s)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));}
+  async retentionInventory(name,keep) {
+    const current=local.capture(name),files=await this.store.listFiles(current.projectId),revisions=[];
+    for(const file of new Map(files.map(file=>[file.id,file])).values()) {
+      // Read one validated snapshot at a time; do not keep all history bodies
+      // in memory, even when planning cleanup for a long-lived project.
+      const revision=await this.store.download(file);validateSnapshot(revision);this.check();
+      revisions.push({projectId:revision.projectId,revisionId:revision.revisionId,parents:revision.parents,createdAt:revision.createdAt,
+        contentHash:revision.contentHash,fileId:file.id,bytes:revision.files.reduce((n,f)=>n+f.size,0),
+        fingerprint:createHash('sha256').update(JSON.stringify(revision)).digest('hex')});
+    }
+    if(local.capture(name).contentHash!==current.contentHash) throw new Error('Local project changed; preview cleanup again');
+    const baseline=this.state.projects[current.projectId];
+    return planRetention({revisions,keep,baselineId:baseline?.revisionId,currentHash:current.contentHash});
+  }
+  async previewRetention(name,keep) {
+    return this.serialized(name,async()=> {this.check();const {fileIds,...plan}=await this.retentionInventory(name,keep);return plan;});
+  }
+  async cleanHistory(name,keep,token,confirmed) {
+    if(confirmed!=='permanently-delete-listed-history') throw new Error('Explicit history deletion confirmation required');
+    return this.serialized(name,async()=> {
+      this.check();const plan=await this.retentionInventory(name,keep);
+      if(plan.token!==token) throw new Error('Cloud or local versions changed; preview cleanup again');
+      let removed=0;
+      for(const file of plan.fileIds) {this.check();await this.store.remove(file);removed++;}
+      return {removed};
+    });
+  }
   async discover() {
     const files=await this.store.listFiles();this.check();
     const ids=[...new Set(files.map(f=>f.appProperties?.projectId).filter(Boolean))];
@@ -92,7 +134,7 @@ class SyncService {
     for (const id of ids) {
       const revisions=await this.revisions(id),heads=findHeads(revisions);
       if (!heads.length) continue;
-      const files=validateSnapshot(heads[0]);
+      const files=validateSnapshot(await this.downloadRevision(heads[0]));
       db.validateProjectBytes(files.get('project.db'),id);
       const meta=db.projectMetaFromBytes(files.get('project.db'));
       projects.push({projectId:id,name:meta.name || 'Untitled',heads:heads.map(r=>this.metadata(r))});
@@ -105,7 +147,8 @@ class SyncService {
       const revisions=await this.revisions(projectId);
       const revision=revisions.find(r=>r.revisionId===revisionId);
       if (!revision) throw new Error('Remote revision not found');
-      this.check();if (!this.canApply()) throw new Error('Writing or AI generation is still in progress');local.importProject(name,revision);
+      const snapshot=await this.downloadRevision(revision);
+      this.check();if (!this.canApply()) throw new Error('Writing or AI generation is still in progress');local.importProject(name,snapshot);
       this.baseline(name,revision);return {action:'imported'};
     });
   }
@@ -115,18 +158,19 @@ class SyncService {
       const revisions=await this.revisions(initial.projectId);
       const revision=revisions.find(r=>r.revisionId===revisionId);
       if (!revision) throw new Error('Remote revision not found');
+      const snapshot=await this.downloadRevision(revision);
       const current=local.capture(name);
       if (current.contentHash!==expectedHash) throw new Error('Local project changed; check sync again');
       if (!this.canApply()) throw new Error('Writing or AI generation is still in progress');
       if (choice==='copy') {
         const copyName=`${name.slice(0,70)} (${randomUUID().slice(0,8)})`;
-        local.importProject(copyName,revision,true);
+        local.importProject(copyName,snapshot,true);
         return {action:'copied',name:copyName};
       }
       if (!['restore','download'].includes(choice)) throw new Error('Invalid recovery choice');
       const headsBefore=findHeads(revisions);
       if (choice==='download' && (headsBefore.length!==1 || headsBefore[0].revisionId!==revisionId)) throw new Error('Remote version changed; sync again');
-      this.check();if (!this.canApply()) throw new Error('Writing or AI generation is still in progress');const restored=local.restore(name,revision,expectedHash);
+      this.check();if (!this.canApply()) throw new Error('Writing or AI generation is still in progress');const restored=local.restore(name,snapshot,expectedHash);
       // Restoring is new local work, not an adoption of the old cloud baseline.
       local.saveBackup(restored);this.results.set(name,{action:'restored'});
       const heads=findHeads(revisions);

@@ -1,7 +1,7 @@
 import { Book, Download, File, FileEdit, FileText, type LucideIcon, Trash2, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useT } from '@/hooks/useT'
-import { projectsApi } from '@/lib/api'
+import { apiUrl, projectsApi } from '@/lib/api'
 import { useProjectName } from '@/lib/useProjectData'
 
 interface Format {
@@ -51,7 +51,7 @@ export function ExportPage() {
       const base64 = (reader.result as string).split(',')[1]
       try {
         await projectsApi.uploadCover(project, base64, file.type)
-        setCoverUrl(`/api/${encodeURIComponent(project)}/cover?t=${Date.now()}`)
+        setCoverUrl(`${projectsApi.getCoverUrl(project)}?t=${Date.now()}`)
         setCoverMime(file.type)
       } catch (err: any) {
         setExportMsg(t('export.coverUploadError', { msg: err.message }))
@@ -81,7 +81,7 @@ export function ExportPage() {
       const fmt = activeFormat
       // Single request: the backend generates + sends the file
       const a = document.createElement('a')
-      a.href = `/api/${encodeURIComponent(project)}/export?format=${fmt}&download=1`
+      a.href = apiUrl(`/${encodeURIComponent(project)}/export?format=${fmt}&download=1`)
       const extMap: Record<string, string> = { epub: 'epub', html: 'html', md: 'md', txt: 'txt' }
       a.download = `${project}.${extMap[fmt] || 'txt'}`
       document.body.appendChild(a)

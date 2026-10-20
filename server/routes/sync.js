@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const local = require('../sync/local');
 const {SyncRuntime}=require('../sync/runtime');
+const {publicError}=require('../sync/errors');
 const runtime=new SyncRuntime();
 const wrap=fn=>async(req,res,next)=>{try{res.json(await fn(req));}catch(error){next(error);}};
 router.use((req,res,next)=> {
@@ -8,6 +9,8 @@ router.use((req,res,next)=> {
   next();
 });
 router.get('/status',wrap(()=>runtime.status()));
+router.get('/diagnostics',wrap(()=>runtime.diagnostics()));
+router.post('/wake',wrap(async()=> {await runtime.wake();return {checked:true};}));
 router.post('/configure',wrap(req=>runtime.configure(req.body)));
 router.post('/connect',wrap(()=>runtime.connect()));
 router.post('/disconnect',wrap(()=>runtime.disconnect()));
@@ -18,13 +21,20 @@ router.post('/projects/:name/enable',wrap(async req=> (await runtime.activate())
 router.post('/projects/:name/disable',wrap(async req=> (await runtime.activate()).disable(req.params.name)));
 router.post('/projects/:name/sync',wrap(async req=> (await runtime.activate()).sync(req.params.name)));
 router.get('/projects/:name/history',wrap(async req=> (await runtime.activate()).history(req.params.name)));
+router.post('/projects/:name/retention/preview',wrap(async req=> (await runtime.activate()).previewRetention(req.params.name,req.body.keep)));
+router.post('/projects/:name/retention/clean',wrap(async req=> (await runtime.activate()).cleanHistory(req.params.name,req.body.keep,req.body.token,req.body.confirmed)));
 router.post('/projects/:name/apply',wrap(async req=> (await runtime.activate()).apply(req.params.name,req.body.revisionId,req.body.expectedHash,req.body.choice)));
 router.post('/projects/:name/resolve-local',wrap(async req=> (await runtime.activate()).resolveLocal(req.params.name,req.body.expectedHash)));
 router.get('/projects/:name/backups',wrap(req=>local.listBackups(req.params.name)));
+router.get('/projects/:name/local-status',wrap(req=>({currentHash:local.capture(req.params.name).contentHash})));
+router.post('/projects/:name/backups/:revisionId/restore',wrap(req=>{
+  if(runtime.canApply?.()===false || runtime.service?.running.has(req.params.name)) throw new Error('Writing or sync is still in progress');
+  return local.restoreBackup(req.params.name,req.params.revisionId,req.body.expectedHash);
+}));
 router.post('/projects/:name/backups',wrap(req=> {
   const snapshot=local.capture(req.params.name);local.saveBackup(snapshot);
   return {revisionId:snapshot.revisionId,createdAt:snapshot.createdAt};
 }));
-router.use((error,req,res,next)=>res.status(400).json({error:{message:error.message,recoverable:true}}));
+router.use((error,req,res,next)=>res.status(400).json({error:publicError(error)}));
 router.runtime=runtime;
 module.exports=router;

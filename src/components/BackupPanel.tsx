@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react'
 import { projectsApi } from '@/lib/api'
+import { cloudErrorText } from '@/lib/cloudErrors'
+import { refreshAllData } from '@/lib/dataEvents'
+import { useAgentStore } from '@/stores/useAgentStore'
+import { useChapterStore } from '@/stores/useChapterStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 
-type Backup = { revisionId: string; createdAt: string; bytes: number }
+type Backup = { revisionId: string; createdAt: string; bytes: number; invalid?: boolean }
 const base = '__TAURI_INTERNALS__' in window ? 'http://127.0.0.1:3101/api/sync' : '/api/sync'
 
 export function BackupPanel() {
@@ -48,8 +52,52 @@ export function BackupPanel() {
       setBusy(false)
     }
   }
+  async function restoreBackup(revision: Backup) {
+    if (useAgentStore.getState().isRunning || useChapterStore.getState().saveStatus !== 'saved') {
+      setError(zh ? '请等待写作完成并保存正文，再恢复备份。' : 'Finish writing and save the editor before restoring.')
+      return
+    }
+    if (
+      !window.confirm(
+        zh
+          ? `恢复“${name}”在 ${new Date(revision.createdAt).toLocaleString()} 的本机备份？会先备份当前已保存稿件。`
+          : `Restore the local backup of “${name}” from ${new Date(revision.createdAt).toLocaleString()}? Current saved content will be backed up first.`,
+      )
+    )
+      return
+    setBusy(true)
+    setError('')
+    try {
+      const status = await fetch(`${base}/projects/${encodeURIComponent(name)}/local-status`, {
+        signal: AbortSignal.timeout(10000),
+      })
+      const current = await status.json()
+      if (!status.ok) throw new Error(cloudErrorText(current.error?.code, zh))
+      const response = await fetch(
+        `${base}/projects/${encodeURIComponent(name)}/backups/${revision.revisionId}/restore`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ expectedHash: current.currentHash }),
+          signal: AbortSignal.timeout(30000),
+        },
+      )
+      if (!response.ok) throw new Error(cloudErrorText((await response.json()).error?.code, zh))
+      await refreshAllData()
+      setBackups(await readBackups(name))
+    } catch (error) {
+      setError(error instanceof Error ? error.message : cloudErrorText('operation', zh))
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
     <section className="mb-7" aria-label={zh ? '作品备份' : 'Project backups'}>
+      {busy && (
+        <div role="status" className="fixed inset-0 z-[999] bg-black/60 flex items-center justify-center">
+          <p className="bg-[var(--canvas-card)] p-6 rounded">{zh ? '正在处理本机备份…' : 'Processing local backup…'}</p>
+        </div>
+      )}
       <h3 className="text-sm font-medium mb-2">
         {zh ? '作品备份 · 开发预览' : 'Project backups · Development preview'}
       </h3>
@@ -91,7 +139,19 @@ export function BackupPanel() {
       <ul className="mt-2 text-xs">
         {backups.slice(0, 10).map((b) => (
           <li key={b.revisionId}>
-            {new Date(b.createdAt).toLocaleString()} · {Math.ceil(b.bytes / 1024)} KB
+            {b.invalid
+              ? zh
+                ? '备份损坏或不兼容，已保留文件。'
+                : 'Damaged or incompatible backup; file retained.'
+              : `${new Date(b.createdAt).toLocaleString()} · ${Math.ceil(b.bytes / 1024)} KB`}
+            <button
+              type="button"
+              disabled={busy || b.invalid}
+              className="ml-2 underline disabled:opacity-40"
+              onClick={() => restoreBackup(b)}
+            >
+              {zh ? '恢复此备份' : 'Restore this backup'}
+            </button>
           </li>
         ))}
       </ul>

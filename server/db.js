@@ -10,8 +10,8 @@ const CONFIG_DB = path.join(DB_DIR, 'config.db');
 const PROJECTS_DIR = path.join(DB_DIR, 'projects');
 
 // ─── Ensure directories ───
-if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
-if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR, { recursive: true });
+if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true, mode: 0o700 });
+if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR, { recursive: true, mode: 0o700 });
 
 let SQL;         // set by initDatabase()
 let configDb;    // wrapped config database
@@ -195,7 +195,7 @@ function _wrapDb(db, filePath) {
 
 async function initDatabase() {
   console.log('[DB] Initialising database...');
-  console.log('[DB] DB_DIR:', DB_DIR, '| CONFIG_DB:', CONFIG_DB);
+  console.log('[DB] Opening local application storage');
   const t0 = Date.now();
 
   // ─── Load sql.js library ───
@@ -219,7 +219,7 @@ async function initDatabase() {
     wasmBinary = getWasmBinary();
     console.log('[DB] WASM loaded via base64 embedded module');
   } catch (e) {
-    console.log('[DB] Embedded WASM module not available:', e.message);
+    console.log('[DB] Embedded WASM module not available');
   }
 
   // Strategy 2: fs.readFileSync relative to this file (dev mode, file on disk)
@@ -228,7 +228,7 @@ async function initDatabase() {
       const wasmPath = path.join(__dirname, 'sql-wasm.wasm');
       if (fs.existsSync(wasmPath)) {
         wasmBinary = fs.readFileSync(wasmPath);
-        console.log('[DB] WASM loaded from:', wasmPath);
+        console.log('[DB] WASM loaded from installed resource');
       }
     } catch {
       // strategy 2 failed
@@ -241,7 +241,7 @@ async function initDatabase() {
       const wasmPath = path.join(process.cwd(), 'server', 'sql-wasm.wasm');
       if (fs.existsSync(wasmPath)) {
         wasmBinary = fs.readFileSync(wasmPath);
-        console.log('[DB] WASM loaded from:', wasmPath);
+        console.log('[DB] WASM loaded from installed resource');
       }
     } catch {
       // strategy 3 failed
@@ -704,6 +704,7 @@ function validateProjectBytes(bytes, projectId) {
 }
 
 module.exports = {
+  notifyProjectChanged,
   DB_DIR,
   onProjectChanged(listener) { projectChangeListeners.add(listener); return () => projectChangeListeners.delete(listener); },
   projectExists(name) { const file = getProjectDbPath(name); return fs.existsSync(file) || projectConnections.has(file); },

@@ -22,7 +22,8 @@ function createSnapshot({ projectId, deviceId, parents = [], database, cover }) 
 function validateSnapshot(snapshot) {
   if (!snapshot || snapshot.formatVersion !== 1 || snapshot.schemaVersion !== 2) throw new Error('Unsupported snapshot version');
   if (![snapshot.projectId, snapshot.deviceId, snapshot.revisionId].every(uuid)) throw new Error('Invalid identity');
-  if (!Array.isArray(snapshot.parents) || snapshot.parents.length > 16 || !snapshot.parents.every(uuid) || snapshot.parents.includes(snapshot.revisionId)) throw new Error('Invalid parents');
+  if (typeof snapshot.createdAt!=='string' || snapshot.createdAt.length>40 || !Number.isFinite(Date.parse(snapshot.createdAt))) throw new Error('Invalid revision date');
+  if (!Array.isArray(snapshot.parents) || snapshot.parents.length > 16 || !snapshot.parents.every(uuid) || new Set(snapshot.parents).size!==snapshot.parents.length || snapshot.parents.includes(snapshot.revisionId)) throw new Error('Invalid parents');
   if (!Array.isArray(snapshot.files) || snapshot.files.length < 1 || snapshot.files.length > 2) throw new Error('Invalid files');
   const decoded = new Map();
   let total = 0;
@@ -44,29 +45,41 @@ function validateSnapshot(snapshot) {
 
 // All successful uploads remain discoverable; no mutable latest pointer is trusted.
 function findHeads(revisions) {
+  for (const revision of revisions) validateSnapshot(revision);
+  return graphHeads(revisions);
+}
+
+// Descriptors have already been validated on download. An iterative walk also
+// supports long-lived projects without a recursive stack/depth limit.
+function graphHeads(revisions) {
+  if (!Array.isArray(revisions) || revisions.length>10000) throw new Error('Too many revisions');
   const byId = new Map();
   for (const revision of revisions) {
-    validateSnapshot(revision);
+    if (!uuid(revision.projectId) || !uuid(revision.revisionId) || !Array.isArray(revision.parents) || revision.parents.length>16 || !revision.parents.every(uuid)) throw new Error('Invalid revision graph');
     const previous = byId.get(revision.revisionId);
     if (previous && JSON.stringify(previous) !== JSON.stringify(revision)) throw new Error('Revision identity collision');
     byId.set(revision.revisionId, revision);
   }
   if (new Set(revisions.map(r => r.projectId)).size > 1) throw new Error('Mixed projects');
   const visiting = new Set(), visited = new Set();
-  function visit(id, depth = 0) {
-    if (depth > 512 || visiting.has(id)) throw new Error('Invalid revision graph');
-    if (visited.has(id) || !byId.has(id)) return;
-    visiting.add(id);
-    for (const parent of byId.get(id).parents) visit(parent, depth + 1);
-    visiting.delete(id); visited.add(id);
+  for (const root of byId.keys()) {
+    const pending=[[root,false]];
+    while(pending.length) {
+      const [id,done]=pending.pop();
+      if(done) {visiting.delete(id);visited.add(id);continue;}
+      if(visited.has(id) || !byId.has(id)) continue;
+      if(visiting.has(id)) throw new Error('Invalid revision graph');
+      visiting.add(id);pending.push([id,true]);
+      for(const parent of byId.get(id).parents) pending.push([parent,false]);
+    }
   }
-  for (const id of byId.keys()) visit(id);
   const referenced = new Set(revisions.flatMap(r => r.parents));
   return [...byId.values()].filter(r => !referenced.has(r.revisionId));
 }
 
-function decideSync({ localHash, baseHash, baseRevision, revisions }) {
-  const heads = findHeads(revisions);
+function decideSync(input) {return decide(input,findHeads(input.revisions));}
+function decideGraph(input) {return decide(input,graphHeads(input.revisions));}
+function decide({ localHash, baseHash, baseRevision, revisions },heads) {
   if (!heads.length) return baseRevision ? { action: 'remote-missing' } : { action: 'upload', parents: [] };
   if (heads.length !== 1) return { action: 'conflict', heads: heads.map(r => r.revisionId) };
   const remote = heads[0];
@@ -85,4 +98,4 @@ function decideSync({ localHash, baseHash, baseRevision, revisions }) {
   return { action: 'conflict', heads: [remote.revisionId] };
 }
 
-module.exports = { createSnapshot, validateSnapshot, findHeads, decideSync, hash, MAX_BYTES };
+module.exports = { createSnapshot, validateSnapshot, findHeads, graphHeads, decideSync, decideGraph, hash, MAX_BYTES };

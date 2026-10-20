@@ -31,9 +31,9 @@ try {
   child.stderr.on('data', data => { output += data })
   const exited = new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject) })
   const url = `http://127.0.0.1:${port}/api`
-  async function request(route, body, authorized = false) {
+  async function request(route, body, authorized = false, method = body === undefined ? 'GET' : 'POST') {
     const response = await fetch(`${url}${route}`, {
-      method: body === undefined ? 'GET' : 'POST',
+      method,
       headers: { 'Content-Type': 'application/json', ...(authorized ? { 'X-Mythpen-Sidecar-Token': token } : {}) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(3000),
@@ -52,14 +52,33 @@ try {
   assert.ok(healthy, output || 'Packaged server startup timed out')
   assert.equal((await request('/health')).data.sidecarOwned, false)
   assert.equal((await request('/projects', { name: 'desktop-package-smoke' })).response.status, 200)
+  assert.equal((await request('/desktop-package-smoke/chapters', { title: 'Packaged chapter' })).response.status, 201)
+  assert.equal((await request('/desktop-package-smoke/chapters/1', { content: 'Synthetic installed-app check' }, false, 'PUT')).response.status, 200)
+  assert.equal((await request('/desktop-package-smoke/chapters/1')).data.content, 'Synthetic installed-app check')
+  const cover = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='
+  assert.equal((await request('/desktop-package-smoke/cover', { data: cover, mime: 'image/png' })).response.status, 200)
+  const coverResponse = await fetch(`${url}/desktop-package-smoke/cover`)
+  assert.equal(coverResponse.status, 200)
+  assert.equal(Buffer.from(await coverResponse.arrayBuffer()).toString('base64'), cover)
   const backup = await request('/sync/projects/desktop-package-smoke/backups', {})
   assert.ok(backup.data.revisionId)
   assert.equal((await request('/sync/projects/desktop-package-smoke/backups')).data.length, 1)
+  const expected = (await request('/sync/projects/desktop-package-smoke/local-status')).data.currentHash
+  await request('/desktop-package-smoke/chapters/1', { content: 'Later synthetic content' }, false, 'PUT')
+  assert.equal((await request(`/sync/projects/desktop-package-smoke/backups/${backup.data.revisionId}/restore`, { expectedHash: expected })).response.status, 400)
+  const current = (await request('/sync/projects/desktop-package-smoke/local-status')).data.currentHash
+  assert.equal((await request(`/sync/projects/desktop-package-smoke/backups/${backup.data.revisionId}/restore`, { expectedHash: current })).response.status, 200)
+  assert.equal((await request('/desktop-package-smoke/chapters/1')).data.content, 'Synthetic installed-app check')
+  const diagnostics = await request('/sync/diagnostics')
+  assert.equal(diagnostics.data.telemetry, false)
+  assert.ok(!JSON.stringify(diagnostics.data).includes(directory))
   assert.equal((await request('/sync/status')).data.configured, false)
   assert.equal((await request('/shutdown', {})).response.status, 401)
   assert.equal((await request('/health', undefined, true)).data.sidecarOwned, true)
   assert.equal((await request('/shutdown', {}, true)).response.status, 200)
   assert.equal(await exited, 0)
+  assert.ok(!output.includes(directory), 'Logs must not disclose the private data directory')
+  assert.ok(!output.includes('Synthetic installed-app check'), 'Logs must not disclose manuscript content')
   console.log('Packaged sidecar, credential store, database, backup and owned shutdown checks passed')
 } finally {
   if (child && child.exitCode === null) {

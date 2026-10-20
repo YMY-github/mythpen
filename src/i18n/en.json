@@ -575,5 +575,8 @@
     "contact": "Contact",
     "techStack": "Tech Stack",
     "openLink": "Open"
+  },
+  "cloud": {
+    "open": "Cloud projects and sync"
   }
 }

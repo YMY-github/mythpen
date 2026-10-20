@@ -9,7 +9,7 @@ function formatDate(dateStr: string): string {
   if (!dateStr) return ''
   try {
     const d = new Date(dateStr)
-    if (isNaN(d.getTime())) return dateStr
+    if (Number.isNaN(d.getTime())) return dateStr
     const pad = (n: number) => n.toString().padStart(2, '0')
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
   } catch {
@@ -45,9 +45,14 @@ export function ProjectList() {
                 {t('project.total', { count: projects.length, words: totalWords.toLocaleString() })}
               </div>
             </div>
-            <button className="btn-primary h-[34px] px-5" onClick={() => setProjectDialogOpen(true)}>
-              + {t('project.new')}
-            </button>
+            <div className="flex items-center gap-2">
+              <button type="button" className="btn-primary h-[34px] px-5" onClick={() => useUIStore.setState({ settingsOpen: true })}>
+                {t('cloud.open')}
+              </button>
+              <button type="button" className="btn-primary h-[34px] px-5" onClick={() => setProjectDialogOpen(true)}>
+                + {t('project.new')}
+              </button>
+            </div>
           </div>
 
           {projects.length === 0 ? (
@@ -71,7 +76,7 @@ export function ProjectList() {
                   onClick={() => setCurrentProject(p.name)}
                 >
                   {/* Delete button — visible on hover */}
-                  <button
+                  <button type="button"
                     className="absolute top-3 right-3 w-7 h-7 flex items-center justify-center rounded-md opacity-0 group-hover:opacity-100 hover:bg-[var(--canvas-mid)] text-[var(--ink-tertiary)] hover:text-red-500 transition-all"
                     onClick={(e) => {
                       e.stopPropagation()
@@ -136,7 +141,7 @@ export function ProjectList() {
           >
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-display text-lg font-semibold text-[var(--ink)]">{t('project.deleteTooltip')}</h2>
-              <button
+              <button type="button"
                 className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-[var(--canvas-mid)] text-[var(--ink-tertiary)]"
                 onClick={() => setDeleteTarget(null)}
               >
@@ -149,10 +154,10 @@ export function ProjectList() {
               {t('project.permanentDelete')}
             </p>
             <div className="flex justify-end gap-2">
-              <button className="btn-secondary h-[34px] px-4" onClick={() => setDeleteTarget(null)}>
+              <button type="button" className="btn-secondary h-[34px] px-4" onClick={() => setDeleteTarget(null)}>
                 {t('project.cancel')}
               </button>
-              <button
+              <button type="button"
                 className="btn-primary h-[34px] px-4 !bg-red-600 !border-red-600 hover:!bg-red-700"
                 onClick={handleDelete}
               >

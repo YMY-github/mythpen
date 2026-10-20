@@ -6,6 +6,7 @@ const {GoogleOAuth}=require('./oauth');
 const {SecureVault}=require('./vault');
 const {GoogleDriveStore}=require('./drive');
 const {SyncService}=require('./service');
+const {publicError}=require('./errors');
 
 class SyncRuntime {
   constructor() {this.epoch=0;this.phase='disconnected';this.timer=null;this.message='';this.delays=new Map();}
@@ -39,7 +40,7 @@ class SyncRuntime {
       const oauth=this.oauth;
       this.store=new GoogleDriveStore({getToken:()=>oauth.getToken(),signal:this.controller.signal});
       this.service=new SyncService({store:this.store,accountId:`${this.config().client_id}:${saved.accountId}`,isActive:()=>epoch===this.epoch,canApply:()=>this.canApply?.() !== false});
-      this.phase='connected';this.account=saved.accountName || saved.accountId;
+      this.phase='connected';this.message='';this.account=saved.accountName || saved.accountId;
       return this.service;
     })();
     try {return await this.activating;} finally {this.activating=null;}
@@ -64,7 +65,7 @@ class SyncRuntime {
       if(epoch===this.epoch) await this.activate();
     }).catch(async error=> {
       if(epoch!==this.epoch) return;
-      this.phase='disconnected';this.message=error.message;
+      this.phase='disconnected';this.message=publicError(error).message;this.errorCode=publicError(error).code;
       await this.oauth.disconnect().catch(()=>{});
     });
     return {url:flow.url};
@@ -78,9 +79,9 @@ class SyncRuntime {
   async status() {
     const config=this.config();
     if(config && !['connecting','disconnecting'].includes(this.phase) && !this.service) {
-      try {await this.activate();} catch(error) {if(!/Connect Google first/.test(error.message)) this.message=error.message;}
+      try {await this.activate();} catch(error) {if(!/Connect Google first/.test(error.message)) {const safe=publicError(error);this.message=safe.message;this.errorCode=safe.code;}}
     }
-    return {configured:!!config,clientId:config?.client_id || '',phase:this.phase,account:this.account || null,message:this.message};
+    return {configured:!!config,clientId:config?.client_id || '',phase:this.phase,account:this.account || null,message:this.message,errorCode:this.message ? this.errorCode : null};
   }
   start() {
     this.unobserve=db.onProjectChanged(name => {
@@ -100,6 +101,20 @@ class SyncRuntime {
       try {await (await this.activate()).tick();} catch { /* UI status exposes setup/auth errors. */ }
     },120000);
     this.timer.unref();
+  }
+  async wake() {
+    // Focus and network events can arrive together; avoid a request storm.
+    if (this.phase==='connecting' || this.phase==='disconnecting' || (this.lastWake && Date.now()-this.lastWake<30000)) return;
+    this.lastWake=Date.now();
+    await (await this.activate()).tick();
+  }
+  diagnostics() {
+    const projects=Object.values(this.service?.state.projects || {});
+    return {formatVersion:1,appVersion:require('../../package.json').version,platform:process.platform,architecture:process.arch,
+      secureStorageSupported:['darwin','win32'].includes(process.platform),googleConfigured:!!this.config(),connectionPhase:this.phase,
+      enabledProjects:projects.filter(project=>project.enabled).length,autoUploadProjects:projects.filter(project=>project.enabled && project.auto).length,
+      resultCounts:[...(this.service?.results?.values() || [])].reduce((out,result)=>{out[result.action]=(out[result.action] || 0)+1;return out;},{}),
+      limits:{snapshotMiB:64,historyFiles:10000},telemetry:false};
   }
   stop() {this.unobserve?.();for(const timer of this.delays.values()) clearTimeout(timer);this.delays.clear();clearInterval(this.timer);this.controller?.abort();this.oauth?.cancel?.();}
 }

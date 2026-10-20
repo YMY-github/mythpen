@@ -104,3 +104,69 @@ test('cloud discovery displays actual project name rather than internal identity
   const {name,service}=fixture();service.enable(name);await service.sync(name);
   assert.equal((await service.discover())[0].name,name);
 });
+
+test('pending status reflects saved edits after a successful upload and survives service restart',async()=>{
+  const {name,service,store}=fixture();service.enable(name,true);
+  assert.equal(service.status(name).pending,true);
+  await service.sync(name);assert.equal(service.status(name).pending,false);
+  db.projectExecute(name,"UPDATE chapters SET content='等待下一次上传'");
+  assert.equal(service.status(name).pending,true);
+  const restarted=new SyncService({store,accountId:service.accountId});
+  assert.equal(restarted.status(name).pending,true);
+  await restarted.sync(name);assert.equal(restarted.status(name).pending,false);
+});
+
+test('history cleanup requires confirmation, rejects stale previews and preserves usable heads',async()=>{
+ const {name,service,store,revisions}=fixture();service.enable(name);
+ for(let i=0;i<5;i++){
+  db.projectExecute(name,'UPDATE chapters SET content=?',[`draft-${i}`]);await service.sync(name);
+  revisions[revisions.length-1].createdAt=new Date(Date.UTC(2020,0,i+1)).toISOString();
+ }
+ const removed=[];store.remove=async id=>{removed.push(id);const index=revisions.findIndex(r=>r.revisionId===id);assert.ok(index>=0);revisions.splice(index,1);};
+ const plan=await service.previewRetention(name,2);assert.equal(plan.removeCount,3);
+ await assert.rejects(service.cleanHistory(name,2,plan.token,''),/confirmation/);assert.equal(removed.length,0);
+ db.projectExecute(name,"UPDATE chapters SET content='edit during preview'");
+ await assert.rejects(service.cleanHistory(name,2,plan.token,'permanently-delete-listed-history'),/changed/);assert.equal(removed.length,0);
+ const fresh=await service.previewRetention(name,2);
+ const result=await service.cleanHistory(name,2,fresh.token,'permanently-delete-listed-history');
+ assert.equal(result.removed,3);assert.equal(revisions.length,2);
+ assert.equal((await service.sync(name)).action,'uploaded');assert.equal(service.status(name).pending,false);
+});
+
+test('local backup restoration works without Google and the restored work can sync as a new revision',async()=>{
+ const {name,service,revisions}=fixture();
+ const original=local.capture(name);local.saveBackup(original);
+ service.enable(name);await service.sync(name);
+ db.projectExecute(name,"UPDATE chapters SET content='later saved version'");await service.sync(name);
+ const current=local.capture(name);
+ assert.throws(()=>local.restoreBackup(name,'../../other',current.contentHash),/identity/);
+ assert.throws(()=>local.restoreBackup(name,original.revisionId,'stale-hash'),/changed/);
+ local.restoreBackup(name,original.revisionId,current.contentHash);
+ assert.equal(db.projectGet(name,'SELECT content FROM chapters').content,'初稿');
+ assert.ok(local.listBackups(name).length>=3);
+ assert.equal((await service.sync(name)).action,'uploaded');assert.equal(revisions.length,3);
+ assert.equal(revisions[2].parents[0],revisions[1].revisionId);
+});
+test('one corrupt local backup does not hide valid backups or overwrite local work',()=>{
+ const {name}=fixture(),current=local.capture(name);local.saveBackup(current);
+ const brokenId=randomUUID();fs.writeFileSync(path.join(root,'backups',current.projectId,brokenId+'.json'),'truncated json');
+ const backups=local.listBackups(name);assert.equal(backups.length,2);assert.equal(backups.filter(b=>b.invalid).length,1);
+ assert.throws(()=>local.restoreBackup(name,brokenId,current.contentHash));
+ assert.equal(local.capture(name).contentHash,current.contentHash);
+});
+
+test('history scanning retains only verified descriptors and detects changed revision bodies before apply',async()=>{
+ const {name,service,store,revisions}=fixture();service.enable(name);await service.sync(name);
+ const graph=await service.revisions(local.capture(name).projectId);
+ assert.equal(graph.length,1);assert.ok(graph[0].files.every(file=>!('data' in file)));
+ assert.equal(graph[0].fingerprint.length,64);
+ const original=store.download;let reads=0;
+ store.download=async file=>{
+  const value=await original(file);
+  if(++reads>1)value.createdAt='2020-01-01T00:00:00.000Z';
+  return value;
+ };
+ const hash=local.capture(name).contentHash;
+ await assert.rejects(service.apply(name,revisions[0].revisionId,hash,'restore'),/changed after validation/);
+ assert.equal(local.capture(name).contentHash,hash);
+});

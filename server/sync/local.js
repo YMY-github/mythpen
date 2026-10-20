@@ -50,9 +50,13 @@ function listBackups(name) {
   const dir = path.join(db.DB_DIR, 'backups', snapshot.projectId);
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir).filter(file => /^[0-9a-f-]{36}\.json$/.test(file)).map(file => {
-    const s = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
-    validateSnapshot(s);
-    return { revisionId: s.revisionId, createdAt: s.createdAt, deviceId: s.deviceId, bytes: s.files.reduce((n,f) => n + f.size, 0) };
+    try {
+      const s=readSnapshot(path.join(dir,file));
+      if(s.projectId!==snapshot.projectId || `${s.revisionId}.json`!==file) throw new Error('Backup identity mismatch');
+      return { revisionId: s.revisionId, createdAt: s.createdAt, deviceId: s.deviceId, bytes: s.files.reduce((n,f) => n + f.size, 0) };
+    } catch {
+      return {revisionId:file.slice(0,-5),createdAt:'',bytes:0,invalid:true};
+    }
   }).sort((a,b) => b.createdAt.localeCompare(a.createdAt));
 }
 
@@ -94,6 +98,7 @@ function apply(name, snapshot) {
     const file = `cover.${ext}`;
     if (!files.has(file) && fs.existsSync(path.join(dir,file))) fs.unlinkSync(path.join(dir,file));
   }
+  db.notifyProjectChanged(db.getProjectDbPath(name));
 }
 
 function recoverPending() {
@@ -137,4 +142,11 @@ function importProject(name, snapshot, clone = false) {
   apply(name,imported);register(name);fs.unlinkSync(journal);
   return imported;
 }
-module.exports = { importProject, capture, saveBackup, listBackups, readSnapshot, restore, recoverPending, atomicWrite };
+function restoreBackup(name,revisionId,expectedHash) {
+  if(typeof revisionId!=='string' || !/^[0-9a-f-]{36}$/i.test(revisionId)) throw new Error('Invalid backup identity');
+  const current=capture(name);
+  const snapshot=readSnapshot(path.join(db.DB_DIR,'backups',current.projectId,`${revisionId}.json`));
+  const restored=restore(name,snapshot,expectedHash);saveBackup(restored);
+  return {revisionId:restored.revisionId};
+}
+module.exports = { importProject, capture, saveBackup, listBackups, readSnapshot, restore, restoreBackup, recoverPending, atomicWrite };
