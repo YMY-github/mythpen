@@ -52,6 +52,8 @@ try {
   assert.ok(healthy, output || 'Packaged server startup timed out')
   assert.equal((await request('/health')).data.sidecarOwned, false)
   assert.equal((await request('/projects', { name: 'desktop-package-smoke' })).response.status, 200)
+  assert.equal((await request('/sync/documents/open', {name:'desktop-package-smoke'})).data.action,'local')
+  assert.equal((await request('/sync/documents/catalog', {})).data.local,true)
   assert.equal((await request('/desktop-package-smoke/chapters', { title: 'Packaged chapter' })).response.status, 201)
   assert.equal((await request('/desktop-package-smoke/chapters/1', { content: 'Synthetic installed-app check' }, false, 'PUT')).response.status, 200)
   assert.equal((await request('/desktop-package-smoke/chapters/1')).data.content, 'Synthetic installed-app check')

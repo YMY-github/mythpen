@@ -52,6 +52,7 @@ jobs:
       - name: Check sync and application types
         run: |
           pnpm test:sync
+          pnpm test:editor
           pnpm exec tsc --project tsconfig.app.json --noEmit
       - name: Compile packaged server and native credentials
         run: pnpm build:sidecar

@@ -12,7 +12,7 @@ class SyncService {
     this.store = store; this.accountId = accountId; this.isActive = isActive; this.canApply = canApply;
     this.file = stateFile || path.join(db.DB_DIR, `sync-${createHash('sha256').update(accountId).digest('hex')}.json`);
     this.state = fs.existsSync(this.file) ? JSON.parse(fs.readFileSync(this.file,'utf8')) : { projects: {} };
-    this.running = new Map(); this.results = new Map(); this.failures = new Map();
+    this.running = new Map(); this.results = new Map(); this.failures = new Map();this.revisionCache=new Map();
   }
   check() { if (!this.isActive()) throw new Error('Account disconnected or changed'); }
   save() { this.check(); local.atomicWrite(this.file, JSON.stringify(this.state)); }
@@ -30,12 +30,16 @@ class SyncService {
     this.check();
     const byId=new Map();
     for (const file of new Map(files.map(file=>[file.id,file])).values()) {
+      const cacheKey=file.version && file.md5Checksum ? `${file.id}:${file.version}:${file.md5Checksum}` : null;
+      const cached=cacheKey && this.revisionCache.get(cacheKey);
+      if(cached) {const previous=byId.get(cached.revisionId);if(previous && previous.fingerprint!==cached.fingerprint) throw new Error('Revision identity collision');byId.set(cached.revisionId,{...cached,file});continue;}
       const revision=await this.store.download(file);validateSnapshot(revision);this.check();
       const fingerprint=hash(JSON.stringify(revision)),previous=byId.get(revision.revisionId);
       if(previous && previous.fingerprint!==fingerprint) throw new Error('Revision identity collision');
       if(!previous) byId.set(revision.revisionId,{projectId:revision.projectId,revisionId:revision.revisionId,parents:revision.parents,
         createdAt:revision.createdAt,deviceId:revision.deviceId,contentHash:revision.contentHash,
         files:revision.files.map(({name,size,sha256})=>({name,size,sha256})),file,fingerprint});
+      if(cacheKey) {this.revisionCache.set(cacheKey,byId.get(revision.revisionId));if(this.revisionCache.size>10000)this.revisionCache.delete(this.revisionCache.keys().next().value);}
     }
     const revisions=[...byId.values()];
     findHeads(revisions); return revisions;

@@ -176,12 +176,15 @@ router.put('/:project/chapters/:num', (req, res) => {
   fields.push("updated_at = datetime('now')");
   params.push(parseInt(num));
 
-  const sql = `UPDATE chapters SET ${fields.join(', ')} WHERE num = ?`;
-  db.projectExecute(project(req.params.project), sql, params);
+  const volumeId=req.body?.volume_id;
+  const sql = `UPDATE chapters SET ${fields.join(', ')} WHERE num = ?${volumeId!==undefined?' AND volume_id = ?':''}`;
+  if(volumeId!==undefined)params.push(volumeId);
+  const changed=db.projectExecute(project(req.params.project), sql, params);
+  if(!changed)return res.status(404).json({error:{code:'DB_NOT_FOUND',message:'Chapter no longer exists; local draft was retained'}});
   db.recalculateWordCount(project(req.params.project));
 
   const updated = db.projectGet(project(req.params.project),
-    'SELECT * FROM chapters WHERE num = ?', [parseInt(num)]
+    `SELECT * FROM chapters WHERE num = ?${volumeId!==undefined?' AND volume_id = ?':''}`, volumeId!==undefined?[parseInt(num),volumeId]:[parseInt(num)]
   );
   res.json(updated);
 });

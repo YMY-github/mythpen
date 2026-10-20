@@ -1,7 +1,6 @@
 import { Bot, Download, Eye, EyeOff, Globe, Palette, Pen, RotateCw, SwatchBook, X, Zap } from 'lucide-react'
 import { useState } from 'react'
 import { CloudSyncPanel } from './CloudSyncPanel'
-import { BackupPanel } from './BackupPanel'
 import { useT } from '@/hooks/useT'
 import { apiUrl } from '@/lib/api'
 import { refreshAllData } from '@/lib/dataEvents'
@@ -107,7 +106,6 @@ export function SettingsDrawer() {
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 custom-scrollbar">
           <CloudSyncPanel />
-          <BackupPanel />
           {/* ── UI Language ── */}
           <div className="mb-7 mt-5">
             <div className="text-[11px] font-medium text-[var(--ink-mute)] tracking-[0.06em] uppercase mb-3">
@@ -194,20 +192,14 @@ export function SettingsDrawer() {
             <SettingRow
               label={t('settings.autoSave')}
               desc={
-                settings.autoSaveInterval > 0
-                  ? t('settings.autoSaveEnabled', { seconds: settings.autoSaveInterval })
-                  : t('settings.autoSaveDisabled')
+                settings.uiLanguage === 'zh'
+                  ? '输入后自动保存；连接 Google 后自动上传，无需手动更新。'
+                  : 'Changes save automatically and upload when Google is connected.'
               }
             >
-              <button
-                className={`w-9 h-5 rounded-full border-none cursor-pointer relative transition-colors shrink-0
-                  ${settings.autoSaveInterval > 0 ? 'bg-[var(--accent-gold)]' : 'bg-[var(--canvas-mid)]'}`}
-                onClick={() => updateSetting('autoSaveInterval', settings.autoSaveInterval > 0 ? 0 : 30)}
-              >
-                <span
-                  className={`absolute top-[2px] left-[2px] w-4 h-4 rounded-full bg-[var(--ink)] transition-transform ${settings.autoSaveInterval > 0 ? 'translate-x-4' : ''}`}
-                />
-              </button>
+              <span className="text-xs text-[var(--ink-tertiary)]">
+                {settings.uiLanguage === 'zh' ? '始终开启' : 'Always on'}
+              </span>
             </SettingRow>
             <SettingRow label={t('settings.fontFamily')}>
               <select

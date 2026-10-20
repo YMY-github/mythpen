@@ -5,6 +5,7 @@
 
 import { useChapterStore } from '@/stores/useChapterStore'
 import { useProjectStore } from '@/stores/useProjectStore'
+import { useCloudDocumentStore } from '@/stores/useCloudDocumentStore'
 
 /** Entity types that can be modified by AI tool calls. */
 export type EntityType =
@@ -39,6 +40,7 @@ export function onDataChanged(fn: Listener): () => void {
 
 /** Broadcast that data has changed. Any store that cares about `entity` should re-fetch. */
 export function notifyDataChanged(entity: EntityType, ids?: (string | number)[]): void {
+  if (entity !== 'stats') useCloudDocumentStore.setState((state) => ({ editVersion: state.editVersion + 1 }))
   const event: DataChangeEvent = { entity, ids, source: 'auto' }
   refreshVersion++
   // Use setTimeout to avoid cascading updates inside a React render cycle
@@ -87,11 +89,6 @@ export function refreshAllData(project?: string): Promise<void> {
 
   if (proj) {
     reloads.push(useChapterStore.getState().loadChapters(proj))
-
-    const currentCh = useChapterStore.getState().currentChapter
-    if (currentCh) {
-      reloads.push(useChapterStore.getState().loadChapterContent(proj, currentCh.num))
-    }
   }
 
   reloads.push(useProjectStore.getState().loadProjects())

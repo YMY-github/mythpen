@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { AIPanel } from '@/components/AIPanel'
 import { BottomStatusbar } from '@/components/BottomStatusbar'
+import { CloudDocumentGate } from '@/components/CloudDocumentGate'
 import { NewProjectDialog } from '@/components/NewProjectDialog'
 import { SettingsDrawer } from '@/components/SettingsDrawer'
 import { Sidebar } from '@/components/Sidebar'
@@ -9,6 +10,7 @@ import { ToastContainer } from '@/components/ToastContainer'
 import { useToast } from '@/hooks/useToast'
 import { t } from '@/i18n'
 import { refreshAllData } from '@/lib/dataEvents'
+import { startCloudDocuments } from '@/lib/cloudDocuments'
 import { About } from '@/pages/About'
 import { Characters } from '@/pages/Characters'
 import { Consistency } from '@/pages/Consistency'
@@ -28,6 +30,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useSidebarStore } from '@/stores/useSidebarStore'
 import { useUIStore } from '@/stores/useUIStore'
+import { useCloudDocumentStore } from '@/stores/useCloudDocumentStore'
 
 const PAGES: Record<string, React.ReactNode> = {
   'page-dashboard': <Dashboard />,
@@ -50,7 +53,8 @@ function App() {
   const activePage = useSidebarStore((s) => s.activePage)
   const currentProject = useProjectStore((s) => s.currentProject)
   const loadProjects = useProjectStore((s) => s.loadProjects)
-  const loadChapters = useChapterStore((s) => s.loadChapters)
+  const applyingCloud = useCloudDocumentStore((s) => s.applying)
+  const zh = useSettingsStore((s) => s.settings.uiLanguage) === 'zh'
   const loadSettings = useSettingsStore((s) => s.loadFromServer)
   const rightPanelVisible = useUIStore((s) => s.rightPanelVisible)
   const setRightPanelWidth = useUIStore((s) => s.setRightPanelWidth)
@@ -76,12 +80,7 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [currentProject])
 
-  // Reload chapters when project changes
-  useEffect(() => {
-    if (currentProject) {
-      loadChapters(currentProject)
-    }
-  }, [currentProject])
+  useEffect(startCloudDocuments, [])
 
   // Restore right panel width from localStorage
   useEffect(() => {
@@ -101,19 +100,23 @@ function App() {
             <div className="flex-1 flex flex-col min-w-0 min-h-0">
               {/* App view with pages */}
               <div className="flex flex-1 min-w-0 min-h-0">
-                {/* Page content + AI panel */}
-                <div className={`flex-1 flex flex-col min-w-0 min-h-0 ${showProjectList ? 'hidden' : 'flex'}`}>
-                  {Object.entries(PAGES).map(([id, page]) => (
-                    <div
-                      key={id}
-                      className={`flex-1 flex-col min-w-0 min-h-0 ${activePage === id ? 'flex' : 'hidden'}`}
-                    >
-                      {page}
+                {/* Fetch cloud state before mounting editable project views. */}
+                {currentProject && (
+                  <CloudDocumentGate key={currentProject} name={currentProject}>
+                    <div className={`flex-1 flex flex-col min-w-0 min-h-0 ${showProjectList ? 'hidden' : 'flex'}`}>
+                      {Object.entries(PAGES).map(([id, page]) => (
+                        <div
+                          key={id}
+                          className={`flex-1 flex-col min-w-0 min-h-0 ${activePage === id ? 'flex' : 'hidden'}`}
+                        >
+                          {page}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-                {/* AI Panel - toggle via Titlebar button */}
-                {!showProjectList && rightPanelVisible && <AIPanel />}
+                    {/* AI Panel - toggle via Titlebar button */}
+                    {!showProjectList && rightPanelVisible && <AIPanel />}
+                  </CloudDocumentGate>
+                )}
               </div>
             </div>
           </>
@@ -123,6 +126,11 @@ function App() {
       <NewProjectDialog />
       <SettingsDrawer />
       <ToastContainer toasts={toasts} />
+      {applyingCloud && (
+        <div className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center" role="status">
+          <p className="bg-[var(--canvas-card)] p-5 rounded">{zh ? '正在自动更新云端稿件…' : 'Updating from cloud…'}</p>
+        </div>
+      )}
 
       {/* Global styles for reused patterns */}
       <style>{`

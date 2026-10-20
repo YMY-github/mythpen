@@ -1,5 +1,6 @@
 import { Check, Loader, Pen, Plus, Save, ScrollText, Sparkles } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { chapterDrafts, queueChapterDraft } from '@/lib/editorDrafts'
 import { useT } from '@/hooks/useT'
 import { aiApi, extractAIJsonObject, getAIResponseText } from '@/lib/api'
 import { useChapterStore } from '@/stores/useChapterStore'
@@ -23,6 +24,14 @@ export function Outline() {
   const [generating, setGenerating] = useState(false)
   const [optimizing, setOptimizing] = useState(false)
   const [aiSuggestion, setAiSuggestion] = useState('')
+  const autosave = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (autosave.current) clearTimeout(autosave.current)
+      if (currentProject) void chapterDrafts.flush(currentProject).catch(() => {})
+    },
+    [currentProject],
+  )
 
   const activeChapter = volumes.flatMap((v) => v.chapters).find((c) => c.id === activeChapterId)
 
@@ -62,6 +71,14 @@ export function Outline() {
       console.error('Save failed:', e)
     }
     setSaving(false)
+  }
+  function queueOutline(data: Record<string, string>) {
+    if (!currentProject || !activeChapter) return
+    queueChapterDraft({ project: currentProject, num: activeChapter.num, volumeId: activeChapter.volumeId, data })
+    if (autosave.current) clearTimeout(autosave.current)
+    autosave.current = setTimeout(() => {
+      void chapterDrafts.flush(currentProject).catch(() => {})
+    }, 500)
   }
 
   const toggleVolumeCollapse = (volumeId: number) => {
@@ -120,17 +137,25 @@ export function Outline() {
           handleSaveTitle(parsed.title)
         }
         if (parsed.outline) setOutlineText(parsed.outline)
-        setDimensions({
+        const generated = {
           cognitiveFrame: parsed.cognitive_frame || dimensions.cognitiveFrame,
           emotionalAnchor: parsed.emotional_anchor || dimensions.emotionalAnchor,
           worldTexture: parsed.world_texture || dimensions.worldTexture,
           concreteMystery: parsed.concrete_mystery || dimensions.concreteMystery,
           interpersonalTension: parsed.interpersonal_tension || dimensions.interpersonalTension,
+        }
+        setDimensions(generated)
+        queueOutline({
+          outline: parsed.outline || outlineText,
+          cognitive_frame: generated.cognitiveFrame,
+          emotional_anchor: generated.emotionalAnchor,
+          world_texture: generated.worldTexture,
+          concrete_mystery: generated.concreteMystery,
+          interpersonal_tension: generated.interpersonalTension,
         })
-        // Auto-save after generation
-        setTimeout(() => handleSaveOutline(), 100)
       } else if (text) {
         setOutlineText(text)
+        queueOutline({ outline: text })
       }
     } catch (e) {
       console.error('Generate outline failed:', e)
@@ -182,6 +207,14 @@ export function Outline() {
 
   const updateDimension = (key: string, value: string) => {
     setDimensions((prev) => ({ ...prev, [key]: value }))
+    const fields: Record<string, string> = {
+      cognitiveFrame: 'cognitive_frame',
+      emotionalAnchor: 'emotional_anchor',
+      worldTexture: 'world_texture',
+      concreteMystery: 'concrete_mystery',
+      interpersonalTension: 'interpersonal_tension',
+    }
+    queueOutline({ [fields[key]]: value })
   }
 
   const statusIcon: Record<string, React.ReactNode> = {
@@ -327,7 +360,11 @@ export function Outline() {
                   rows={3}
                   className="w-full bg-[var(--canvas-elevated)] border border-[var(--hairline)] rounded-[var(--radius-sm)] p-2.5 font-sans text-[13px] text-[var(--ink)] outline-none resize-vertical focus:border-[var(--accent-gold)]"
                   value={outlineText}
-                  onChange={(e) => setOutlineText(e.target.value)}
+                  data-cloud-draft="outline"
+                  onChange={(e) => {
+                    setOutlineText(e.target.value)
+                    queueOutline({ outline: e.target.value })
+                  }}
                   placeholder={t('outline.placeholderOutline')}
                 />
               </div>
@@ -427,6 +464,7 @@ function FiveDimField({
         {label}
       </label>
       <textarea
+        data-cloud-draft="dimension"
         rows={2}
         className="w-full bg-[var(--canvas-elevated)] border border-[var(--hairline)] rounded-[var(--radius-sm)] p-2 font-sans text-[13px] text-[var(--ink)] outline-none resize-vertical min-h-[50px] focus:border-[var(--accent-gold)]"
         value={value}

@@ -1782,7 +1782,7 @@ dependencies = [
 
 [[package]]
 name = "mythpen"
-version = "0.0.3"
+version = "0.0.10"
 dependencies = [
  "tauri",
  "tauri-build",

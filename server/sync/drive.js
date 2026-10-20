@@ -29,7 +29,7 @@ class GoogleDriveStore {
     const files = [];
     let pageToken;
     do {
-      const params = new URLSearchParams({ spaces: 'appDataFolder', q, fields: 'nextPageToken,files(id,name,size,appProperties)', pageSize: '100' });
+      const params = new URLSearchParams({ spaces: 'appDataFolder', q, fields: 'nextPageToken,files(id,name,size,createdTime,modifiedTime,version,md5Checksum,appProperties)', pageSize: '100' });
       if (pageToken) params.set('pageToken',pageToken);
       const response = await this.request(`https://www.googleapis.com/drive/v3/files?${params}`);
       const page = await response.json();
@@ -57,36 +57,48 @@ class GoogleDriveStore {
     } finally { await reader.cancel(); }
     const snapshot = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     validateSnapshot(snapshot);
-    if (file.appProperties?.projectId !== snapshot.projectId || file.appProperties?.revisionId !== snapshot.revisionId) throw new Error('Remote identity mismatch');
+    if (file.appProperties?.projectId !== snapshot.projectId || file.appProperties?.revisionId !== snapshot.revisionId) {
+      if(file.appProperties?.cloudDocumentDevice && file.appProperties.projectId===snapshot.projectId)throw Object.assign(new Error('Cloud document changed during download'),{category:'changed',retryable:true});
+      throw new Error('Remote identity mismatch');
+    }
     return snapshot;
   }
 
-  async upload(snapshot) {
+  async uploadDocument(snapshot) {return this.upload(snapshot,{documentSlot:true});}
+  async upload(snapshot,{documentSlot=false}={}) {
     validateSnapshot(snapshot);
     // Retrying may produce physical duplicates, but revision IDs remain identical.
-    const existing = (await this.listFiles(snapshot.projectId)).find(f => f.appProperties?.revisionId === snapshot.revisionId);
+    const listed=await this.listFiles(snapshot.projectId);
+    const existing = listed.find(f => f.appProperties?.revisionId === snapshot.revisionId);
     if (existing) {
       const remote = await this.download(existing);
       if (JSON.stringify(remote) !== JSON.stringify(snapshot)) throw new Error('Remote revision collision');
       return existing;
     }
     const boundary = `mythpen_${snapshot.revisionId}`;
-    const metadata = { name: `${snapshot.projectId}.${snapshot.revisionId}.json`, parents: ['appDataFolder'], appProperties: { mythpenFormat: '1', projectId: snapshot.projectId, revisionId: snapshot.revisionId } };
+    // Keep one current file per device. Separate slots preserve concurrently
+    // published drafts without an unsafe shared last-writer pointer. Old
+    // immutable preview files are neither modified nor deleted.
+    const slot=documentSlot ? listed.find(file=>file.appProperties?.cloudDocumentDevice===snapshot.deviceId) : null;
+    if(slot && !/^[a-zA-Z0-9_-]+$/.test(slot.id))throw new Error('Invalid cloud document identity');
+    const metadata = { name: documentSlot?`${snapshot.projectId}.current.${snapshot.deviceId}.json`:`${snapshot.projectId}.${snapshot.revisionId}.json`,
+      ...(!slot?{parents:['appDataFolder']}:{}),appProperties: { mythpenFormat: '1', projectId: snapshot.projectId, revisionId: snapshot.revisionId,...(documentSlot?{cloudDocumentDevice:snapshot.deviceId}:{}) } };
     const payload=JSON.stringify(snapshot);
     let file;
-    if(Buffer.byteLength(payload)>5*1024*1024) file=await this.uploadResumable(metadata,Buffer.from(payload));
+    if(Buffer.byteLength(payload)>5*1024*1024) file=await this.uploadResumable(metadata,Buffer.from(payload),slot?.id);
     else {
       const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${payload}\r\n--${boundary}--\r\n`;
-      const response = await this.request('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,size,appProperties', { method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
+      const response = await this.request(`https://www.googleapis.com/upload/drive/v3/files${slot?`/${slot.id}`:''}?uploadType=multipart&fields=id,name,size,appProperties`, { method: slot?'PATCH':'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
       file=await response.json();
     }
     const downloaded = await this.download(file);
     if (JSON.stringify(downloaded) !== JSON.stringify(snapshot)) throw new Error('Upload verification failed');
     return file;
   }
-  async uploadResumable(metadata,body) {
-    const start=await this.request('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,size,appProperties',{
-      method:'POST',headers:{'Content-Type':'application/json','X-Upload-Content-Type':'application/json','X-Upload-Content-Length':String(body.length)},body:JSON.stringify(metadata),redirect:'error'});
+  async uploadResumable(metadata,body,fileId) {
+    if(fileId && !/^[a-zA-Z0-9_-]+$/.test(fileId))throw new Error('Invalid cloud document identity');
+    const start=await this.request(`https://www.googleapis.com/upload/drive/v3/files${fileId?`/${fileId}`:''}?uploadType=resumable&fields=id,name,size,appProperties`,{
+      method:fileId?'PATCH':'POST',headers:{'Content-Type':'application/json','X-Upload-Content-Type':'application/json','X-Upload-Content-Length':String(body.length)},body:JSON.stringify(metadata),redirect:'error'});
     let session;
     try {session=new URL(start.headers.get('Location'));} catch {throw new Error('Invalid upload session identity');}
     if(session.protocol!=='https:' || session.hostname!=='www.googleapis.com' || session.port || session.username || session.password || !session.pathname.startsWith('/upload/drive/')) throw new Error('Untrusted upload session identity');

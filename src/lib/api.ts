@@ -25,7 +25,15 @@ async function request(path: string, options: any = {}) {
     const err = await res.json().catch(() => ({ error: { message: res.statusText } }))
     throw new Error(err.error?.message || err.message || `HTTP ${res.status}`)
   }
-  return res.json()
+  const data = await res.json()
+  if (
+    config.method &&
+    config.method !== 'GET' &&
+    !path.startsWith('/settings') &&
+    typeof window.dispatchEvent === 'function'
+  )
+    window.dispatchEvent(new Event('mythpen-document-saved'))
+  return data
 }
 
 // ─── Projects ───

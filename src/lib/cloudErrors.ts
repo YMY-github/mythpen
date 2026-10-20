@@ -13,20 +13,20 @@ const descriptions: Record<string, [string, string]> = {
   ],
   'disk-space': ['本机磁盘空间不足，请腾出空间后重试。', 'Local disk space is insufficient. Free space and retry.'],
   network: [
-    '暂时无法连接云端，将按同步设置重试；本机内容仍保留。',
-    'Cloud connection failed. Retry follows sync settings; local work is retained.',
+    '暂时无法连接云端，网络恢复后会自动重试；本机稿件仍保留。',
+    'Cloud connection failed. Changes will retry automatically; local work is retained.',
   ],
   credentials: [
     '系统凭证存储需要处理，请核对 macOS 钥匙串或 Windows 凭证提示。',
     'System credential storage needs attention. Review the Keychain or Windows credential prompt.',
   ],
   changed: [
-    '版本或任务状态已变化，请重新检查后再操作。',
-    'Versions or task state changed. Check again before continuing.',
+    '正在保存或处理其他任务，稍后会自动继续同步。',
+    'Saving or another task is in progress. Sync will continue automatically.',
   ],
   size: [
-    '已达到当前预览版的大小限制，请检查作品大小或预览历史清理。',
-    'The preview size limit was reached. Review project size or preview history cleanup.',
+    '作品达到当前大小限制，请减小封面或拆分过大的作品；原稿已保留。',
+    'The document size limit was reached. Reduce the cover or split large projects; local work is retained.',
   ],
   data: [
     '版本校验未通过，已停止应用；本机稿件保留。',

@@ -5,7 +5,7 @@ const local=require('./local');
 const {GoogleOAuth}=require('./oauth');
 const {SecureVault}=require('./vault');
 const {GoogleDriveStore}=require('./drive');
-const {SyncService}=require('./service');
+const {CloudDocuments}=require('./documents');
 const {publicError}=require('./errors');
 
 class SyncRuntime {
@@ -39,7 +39,7 @@ class SyncRuntime {
       this.controller=new AbortController();
       const oauth=this.oauth;
       this.store=new GoogleDriveStore({getToken:()=>oauth.getToken(),signal:this.controller.signal});
-      this.service=new SyncService({store:this.store,accountId:`${this.config().client_id}:${saved.accountId}`,isActive:()=>epoch===this.epoch,canApply:()=>this.canApply?.() !== false});
+      this.service=new CloudDocuments({store:this.store,accountId:`${this.config().client_id}:${saved.accountId}`,isActive:()=>epoch===this.epoch,canApply:()=>this.canApply?.() !== false});
       this.phase='connected';this.message='';this.account=saved.accountName || saved.accountId;
       return this.service;
     })();
@@ -81,25 +81,24 @@ class SyncRuntime {
     if(config && !['connecting','disconnecting'].includes(this.phase) && !this.service) {
       try {await this.activate();} catch(error) {if(!/Connect Google first/.test(error.message)) {const safe=publicError(error);this.message=safe.message;this.errorCode=safe.code;}}
     }
-    return {configured:!!config,clientId:config?.client_id || '',phase:this.phase,account:this.account || null,message:this.message,errorCode:this.message ? this.errorCode : null};
+    return {configured:!!config,clientId:config?.client_id || '',phase:this.phase,account:this.account || null,message:this.message,errorCode:this.message ? this.errorCode : null,automatic:true};
   }
   start() {
     this.unobserve=db.onProjectChanged(name => {
-      const project=Object.values(this.service?.state.projects || {}).find(p=>p.name===name);
-      if(!project?.enabled || !project.auto) return;
+      if(!this.service) return;
       clearTimeout(this.delays.get(name));
       const epoch=this.epoch;
       const timer=setTimeout(async()=> {
         this.delays.delete(name);
-        if(epoch!==this.epoch || !Object.values(this.service?.state.projects || {}).some(p=>p.name===name && p.auto && p.enabled) || !this.service?.canAutoSync(name)) return;
+        if(epoch!==this.epoch || !this.service?.canAutoSync(name)) return;
         try {await this.service?.sync(name);} catch { /* Retry on the periodic check. */ }
-      },30000);
+      },500);
       timer.unref();this.delays.set(name,timer);
     });
     this.timer=setInterval(async()=> {
       if(this.phase==='connecting') return;
       try {await (await this.activate()).tick();} catch { /* UI status exposes setup/auth errors. */ }
-    },120000);
+    },30000);
     this.timer.unref();
   }
   async wake() {

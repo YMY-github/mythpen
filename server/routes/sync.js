@@ -3,7 +3,7 @@ const local = require('../sync/local');
 const {SyncRuntime}=require('../sync/runtime');
 const {publicError}=require('../sync/errors');
 const runtime=new SyncRuntime();
-const wrap=fn=>async(req,res,next)=>{try{res.json(await fn(req));}catch(error){next(error);}};
+const wrap=fn=>async(req,res,next)=>{try{res.json(await fn(req,res));}catch(error){next(error);}};
 router.use((req,res,next)=> {
   if(req.method!=='GET' && !req.is('application/json')) return res.status(415).json({error:{message:'JSON request required'}});
   next();
@@ -14,6 +14,14 @@ router.post('/wake',wrap(async()=> {await runtime.wake();return {checked:true};}
 router.post('/configure',wrap(req=>runtime.configure(req.body)));
 router.post('/connect',wrap(()=>runtime.connect()));
 router.post('/disconnect',wrap(()=>runtime.disconnect()));
+// An aborted/open-timeout request may finish its network reads, but must never
+// replace local data after the frontend has resumed offline editing.
+const live=res=>()=>!res.destroyed && !res.writableEnded;
+async function documentService(){const status=await runtime.status();return status.phase==='connected' ? runtime.activate() : null;}
+router.post('/documents/catalog',wrap(async(req,res)=>{const service=await documentService();return service ? service.catalog(live(res)) : {imported:0,local:true};}));
+router.post('/documents/open',wrap(async(req,res)=>{const service=await documentService();return service ? service.open(req.body.name,live(res)) : {action:'local'};}));
+router.post('/documents/check',wrap(async req=>{const service=await documentService();return service ? service.automaticCheck(req.body.name) : {action:'local'};}));
+router.post('/documents/apply',wrap(async(req,res)=>{const service=await documentService();if(!service)throw new Error('Connect Google first');return service.applyLatest(req.body.name,req.body.expectedHash,live(res));}));
 router.get('/cloud-projects',wrap(async()=> (await runtime.activate()).discover()));
 router.post('/import',wrap(async req=> (await runtime.activate()).import(req.body.projectId,req.body.revisionId,req.body.name)));
 router.get('/projects/:name/status',wrap(async req=> (await runtime.activate()).status(req.params.name)));

@@ -87,8 +87,14 @@ export const useChapterStore = create<ChapterState>((set) => ({
       }))
 
       // Find current: first chapter with content, then first writing chapter, then first chapter
-      let currentChapter = null
+      const previous = useChapterStore.getState()
+      let currentChapter =
+        previous.projectName === project && previous.currentChapter
+          ? volumes.flatMap((v: Volume) => v.chapters).find((c: Chapter) => c.id === previous.currentChapter?.id) ||
+            null
+          : null
       for (const v of volumes) {
+        if (currentChapter) break
         currentChapter =
           v.chapters.find((c: any) => c.content) ||
           v.chapters.find((c: any) => c.status === 'writing' || c.status === 'pending') ||
@@ -106,7 +112,7 @@ export const useChapterStore = create<ChapterState>((set) => ({
   loadChapterContent: async (project, num, volumeId) => {
     try {
       const ch = await chaptersApi.get(project, num, volumeId)
-      if (ch) {
+      if (ch && useProjectStore.getState().currentProject === project) {
         set((s) => {
           const chapter = {
             id: ch.id,
@@ -143,11 +149,14 @@ export const useChapterStore = create<ChapterState>((set) => ({
       if (data.worldTexture !== undefined) apiData.world_texture = data.worldTexture
       if (data.concreteMystery !== undefined) apiData.concrete_mystery = data.concreteMystery
       if (data.interpersonalTension !== undefined) apiData.interpersonal_tension = data.interpersonalTension
+      const state = useChapterStore.getState()
+      apiData.volume_id =
+        data.volumeId ?? (state.currentChapter?.num === num ? state.currentChapter.volumeId : undefined)
 
       await chaptersApi.update(project, num, apiData)
       // Only reload if user is still on this chapter (avoid overwriting after sidebar nav)
       const currentAfterSave = useChapterStore.getState().currentChapter
-      if (currentAfterSave?.num === num) {
+      if (useProjectStore.getState().currentProject === project && currentAfterSave?.num === num) {
         await useChapterStore.getState().loadChapterContent(project, num, currentAfterSave.volumeId)
       }
     } catch (err) {

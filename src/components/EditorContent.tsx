@@ -1,250 +1,199 @@
 import { Pen } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useT } from '@/hooks/useT'
+import { chapterDrafts, queueChapterDraft, registerEditorSaver } from '@/lib/editorDrafts'
 import { useChapterStore } from '@/stores/useChapterStore'
+import { useCloudDocumentStore } from '@/stores/useCloudDocumentStore'
 import { useEditorStore } from '@/stores/useEditorStore'
 import { useProjectStore } from '@/stores/useProjectStore'
-import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useSidebarStore } from '@/stores/useSidebarStore'
+
+function inlineHtml(text: string) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/\*(.+?)\*/g, '<i>$1</i>')
+    .replace(/__(.+?)__/g, '<u>$1</u>')
+    .replace(/`(.+?)`/g, '<code>$1</code>')
+}
+function renderContent(content: string) {
+  return content
+    ? content
+        .split('\n')
+        .map((line) => {
+          if (line.startsWith('## ')) return `<h2>${inlineHtml(line.slice(3))}</h2>`
+          if (line.startsWith('# ')) return `<h1>${inlineHtml(line.slice(2))}</h1>`
+          if (line === '---') return '<hr>'
+          return `<p>${line ? inlineHtml(line) : '<br>'}</p>`
+        })
+        .join('')
+    : ''
+}
+function inlineText(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent || ''
+  if (!(node instanceof HTMLElement)) return ''
+  const tag = node.tagName.toLowerCase(),
+    inner = [...node.childNodes].map(inlineText).join('')
+  if (tag === 'br') return '\n'
+  if (tag === 'b' || tag === 'strong') return `**${inner}**`
+  if (tag === 'i' || tag === 'em') return `*${inner}*`
+  if (tag === 'u') return `__${inner}__`
+  if (tag === 'code') return `\`${inner}\``
+  return inner
+}
+function extractContent(editor: HTMLElement): string {
+  const lines: string[] = []
+  let loose = ''
+  for (const child of editor.childNodes) {
+    if (child instanceof HTMLElement && /^(P|DIV|H1|H2|PRE|HR)$/.test(child.tagName)) {
+      if (loose) {
+        lines.push(loose)
+        loose = ''
+      }
+      let value = child.childNodes.length === 1 && child.firstChild?.nodeName === 'BR' ? '' : inlineText(child)
+      if (child.tagName === 'H1') value = `# ${value}`
+      if (child.tagName === 'H2') value = `## ${value}`
+      if (child.tagName === 'HR') value = '---'
+      if (child.tagName === 'PRE') value = `\`\`\`\n${child.textContent || ''}\n\`\`\``
+      lines.push(value)
+    } else loose += inlineText(child)
+  }
+  if (loose || !lines.length) lines.push(loose)
+  return lines.join('\n')
+}
 
 export function EditorContent() {
   const { fontSize, fontFamily } = useEditorStore()
-  const { currentChapter, volumes, updateChapter, createChapter, setSaveStatus } = useChapterStore()
-  const currentProject = useProjectStore((s) => s.currentProject)
-  const setActivePage = useSidebarStore((s) => s.setActivePage)
+  const chapter = useChapterStore((s) => s.currentChapter)
+  const volumes = useChapterStore((s) => s.volumes)
+  const project = useProjectStore((s) => s.currentProject)
   const { t } = useT()
-  const chapter = currentChapter
-  const editorRef = useRef<HTMLDivElement>(null)
-  const titleRef = useRef<HTMLHeadingElement>(null)
-  const isEditingRef = useRef(false)
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const lastSavedContentRef = useRef('')
-  const hasSavedRef = useRef(false)
-  const [isDirty, setIsDirty] = useState(false)
+  const editor = useRef<HTMLDivElement>(null)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const composing = useRef(false)
+  const identity = useRef('')
+  const lastSaved = useRef('')
+  const saver = useRef<() => Promise<void>>(async () => {})
   const [editingTitle, setEditingTitle] = useState(false)
-  const [titleDraft, setTitleDraft] = useState('')
+  const [title, setTitle] = useState('')
+  const titleRef = useRef('')
+  const editingTitleRef = useRef(false)
+  const key = `${project}:${chapter?.volumeId}:${chapter?.id}`
+  const setStatus = useChapterStore.getState().setSaveStatus
 
-  const allChapters = volumes.flatMap((v) => v.chapters)
-  const hasChapters = allChapters.length > 0
-
-  const handleNewChapter = async () => {
-    if (!currentProject) return
-    await createChapter(currentProject, t('chapter.defaultTitle'))
-    setActivePage('page-writing')
-  }
-
-  // Convert inline markers to HTML
-  function inlineToHtml(text: string): string {
-    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-      .replace(/\*(.+?)\*/g, '<i>$1</i>')
-      .replace(/__(.+?)__/g, '<u>$1</u>')
-      .replace(/`(.+?)`/g, '<code>$1</code>')
-  }
-
-  // Parse content to HTML for display
-  function renderContent(content: string | undefined) {
-    if (!content) return ''
-    const lines = content.split('\n').filter((l) => l.trim())
-    return lines
-      .map((line) => {
-        if (line.startsWith('# ')) return `<h1>${inlineToHtml(line.slice(2))}</h1>`
-        if (line.startsWith('## ')) return `<h2>${inlineToHtml(line.slice(3))}</h2>`
-        if (line.startsWith('「') || line.startsWith('"')) {
-          return `<p class="dialogue">${inlineToHtml(line)}</p>`
-        }
-        return `<p>${inlineToHtml(line)}</p>`
-      })
-      .join('')
-  }
-
-  // Extract HTML editor content back to plain text with simple formatting markers
-  function extractContent(html: string): string {
-    const div = document.createElement('div')
-    div.innerHTML = html
-    const lines: string[] = []
-    for (const child of div.children) {
-      const tag = child.tagName.toLowerCase()
-      if (tag === 'h1') lines.push(`# ${getInlineText(child as HTMLElement)}`)
-      else if (tag === 'h2') lines.push(`## ${getInlineText(child as HTMLElement)}`)
-      else if (tag === 'p') {
-        const text = getInlineText(child as HTMLElement).trim()
-        if (text) lines.push(text)
-      } else if (tag === 'pre') {
-        lines.push('```')
-        lines.push((child as HTMLElement).textContent || '')
-        lines.push('```')
-      } else if (tag === 'hr') {
-        lines.push('---')
-      }
-    }
-    if (lines.length === 0) {
-      const text = getInlineText(div).trim()
-      if (text) lines.push(text)
-    }
-    return lines.join('\n')
-  }
-
-  // Serialize inline formatting to simple markers
-  function getInlineText(el: HTMLElement): string {
-    let result = ''
-    for (const node of el.childNodes) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        result += node.textContent
-      } else if (node instanceof HTMLElement) {
-        const tag = node.tagName.toLowerCase()
-        const inner = getInlineText(node)
-        if (tag === 'b' || tag === 'strong') result += `**${inner}**`
-        else if (tag === 'i' || tag === 'em') result += `*${inner}*`
-        else if (tag === 'u') result += `__${inner}__`
-        else if (tag === 'code') result += `\`${inner}\``
-        else if (tag === 'br') result += '\n'
-        else result += inner
-      }
-    }
-    return result
-  }
-
-  // Persist editor content to server — capture snapshot before any async gap
-  const doSave = useCallback(async () => {
-    const pn = useProjectStore.getState().currentProject
-    const ch = useChapterStore.getState().currentChapter
-    const chNum = ch?.num
-    if (!pn || !ch || !chNum || !editorRef.current) return
-
-    const html = editorRef.current.innerHTML
-    const markdown = editorRef.current.textContent?.trim() ? extractContent(html) : ''
-    if (markdown === lastSavedContentRef.current) return
-    setSaveStatus('saving')
+  const save = useCallback(async () => {
+    if (!project || !chapter || !editor.current) return
+    if (composing.current) throw new Error('Input method composition is in progress')
+    const content = extractContent(editor.current)
+    if (content !== lastSaved.current)
+      queueChapterDraft({ project, num: chapter.num, volumeId: chapter.volumeId, data: { content } })
+    if (!chapterDrafts.pending(project)) return
+    const hasTitle = chapterDrafts
+      .entries(project)
+      .some(
+        ([, draft]) =>
+          draft.num === chapter.num && draft.volumeId === chapter.volumeId && draft.data.title !== undefined,
+      )
+    setStatus('saving')
     try {
-      await updateChapter(pn, chNum, { content: markdown })
-      if (useProjectStore.getState().currentProject !== pn || useChapterStore.getState().currentChapter?.id !== ch.id) return
-      lastSavedContentRef.current = markdown
-      hasSavedRef.current = true
-      const current = editorRef.current?.textContent?.trim() ? extractContent(editorRef.current.innerHTML) : ''
-      const changed = current !== markdown
-      setIsDirty(changed)
-      setSaveStatus(changed ? 'unsaved' : 'saved')
+      await chapterDrafts.flush(project)
+      if (identity.current !== key) return
+      const current = editor.current ? extractContent(editor.current) : content
+      lastSaved.current = current
+      const pending = chapterDrafts.pending(project)
+      setStatus(pending ? 'unsaved' : 'saved')
+      if (!pending)
+        useChapterStore.setState((state) => {
+          if (state.currentChapter?.id !== chapter.id || state.projectName !== project) return state
+          const updated = {
+            ...state.currentChapter,
+            content: current,
+            title: hasTitle ? titleRef.current : state.currentChapter.title,
+          }
+          return {
+            currentChapter: updated,
+            volumes: state.volumes.map((v) => ({
+              ...v,
+              chapters: v.chapters.map((c) => (c.id === updated.id ? updated : c)),
+            })),
+          }
+        })
+    } catch (error) {
+      setStatus('unsaved')
+      throw error
+    }
+  }, [project, chapter, key, setStatus])
+  saver.current = save
+  useEffect(() => registerEditorSaver(() => saver.current()), [])
+  const schedule = () => {
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = setTimeout(() => {
+      void saver.current().catch(() => {})
+    }, 500)
+  }
+  function changed() {
+    if (!project || !chapter || !editor.current) return
+    try {
+      queueChapterDraft({
+        project,
+        num: chapter.num,
+        volumeId: chapter.volumeId,
+        data: { content: extractContent(editor.current) },
+      })
     } catch {
-      setIsDirty(true)
-      setSaveStatus('unsaved')
+      useCloudDocumentStore.setState({ errorCode: 'disk-space' })
     }
-  }, [updateChapter, setSaveStatus]) // no longer depends on chapter/currentProject
-
-  // Debounced auto-save — reads autoSaveInterval from settings
-  const doSaveRef = useRef(doSave)
-  doSaveRef.current = doSave
-
-  const scheduleAutosave = useCallback(() => {
-    const interval = useSettingsStore.getState().settings.autoSaveInterval
-    if (!interval || interval <= 0) return // auto-save disabled
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    saveTimerRef.current = setTimeout(() => {
-      doSaveRef.current()
-    }, interval * 1000)
-  }, []) // stable — reads doSave and settings through refs
-
-  // Sync editor content from store when chapter changes
-  const syncContent = useCallback(() => {
-    if (!editorRef.current) return
-    if (!chapter) {
-      editorRef.current.innerHTML = ''
-      return
-    }
-    editorRef.current.innerHTML = chapter.content ? renderContent(chapter.content) : ''
-    if (editorRef.current.innerHTML) {
-      editorRef.current.removeAttribute('data-placeholder')
-    } else {
-      editorRef.current.setAttribute('data-placeholder', t('editor.startWriting'))
-    }
-    lastSavedContentRef.current = chapter.content || ''
-  }, [chapter])
-
-  // Watch chapter changes (switching chapters) and external content updates (AI generation)
+    setStatus('unsaved')
+    if (!composing.current) schedule()
+  }
   useEffect(() => {
-    if (!isEditingRef.current) {
-      syncContent()
+    if (!editor.current) return
+    const switched = identity.current !== key
+    if (!switched && (composing.current || (project && chapterDrafts.pending(project)))) return
+    const saved = chapter?.content || ''
+    const draft =
+      switched && project && chapter
+        ? chapterDrafts
+            .entries(project)
+            .find(([, entry]) => entry.num === chapter.num && entry.volumeId === chapter.volumeId)?.[1]
+        : null
+    const content = typeof draft?.data.content === 'string' ? draft.data.content : saved
+    if (switched || extractContent(editor.current) !== content) editor.current.innerHTML = renderContent(content)
+    lastSaved.current = saved
+    identity.current = key
+    if (!editingTitleRef.current) {
+      titleRef.current = chapter?.title || ''
+      if (!switched) setTitle(chapter?.title || '')
     }
-    setIsDirty(false)
-    // Only show 'saved' if content exists and we've actually persisted it
-    if (chapter?.content && hasSavedRef.current) {
-      setSaveStatus('saved')
-    } else if (chapter?.content) {
-      // Content exists from load, not from our save — show neutral state
-      setSaveStatus('saved')
-    } else {
-      // Empty chapter with no saves yet
-      setSaveStatus('saved')
-    }
-    return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    }
-  }, [chapter?.id, chapter?.num, syncContent])
-
-  // Mark unsaved when user starts editing
-  useEffect(() => {
-    if (isDirty) setSaveStatus('unsaved')
-  }, [isDirty, setSaveStatus])
-
-  // Save on blur (immediate, no debounce)
-  const handleBlur = useCallback(() => {
-    isEditingRef.current = false
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    doSave()
-  }, [doSave])
-
-  // Schedule auto-save on each keystroke
-  const handleInput = useCallback(() => {
-    isEditingRef.current = true
-    setIsDirty(true)
-    if (editorRef.current?.hasAttribute('data-placeholder')) {
-      editorRef.current.removeAttribute('data-placeholder')
-    }
-    scheduleAutosave()
-  }, [scheduleAutosave])
-
-  // Auto-focus editor when writing page becomes visible
-  const activePage = useSidebarStore((s) => s.activePage)
-  useEffect(() => {
-    if (chapter && editorRef.current && activePage === 'page-writing') {
-      const timer = setTimeout(() => editorRef.current?.focus(), 100)
-      return () => clearTimeout(timer)
-    }
-  }, [chapter?.id, activePage])
-
-  const handleFocus = useCallback(() => {
-    isEditingRef.current = true
-  }, [])
-
-  // Title edit handlers
-  const handleTitleClick = useCallback(() => {
-    setEditingTitle(true)
-    setTitleDraft(chapter?.title || '')
-  }, [chapter?.title])
-
-  const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setTitleDraft(e.target.value)
-    setSaveStatus('unsaved')
-  }, [setSaveStatus])
-
-  const handleTitleSave = useCallback(async () => {
-    setEditingTitle(false)
-    if (!currentProject || !chapter || !titleDraft.trim() || titleDraft.trim() === chapter.title) return
-    setSaveStatus('saving')
-    try { await updateChapter(currentProject, chapter.num, { title: titleDraft.trim() }); setSaveStatus('saved') }
-    catch { setSaveStatus('unsaved') }
-  }, [currentProject, chapter, titleDraft, updateChapter, setSaveStatus])
-
-  const handleTitleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      ;(e.target as HTMLInputElement).blur()
-    }
-    if (e.key === 'Escape') {
+    if (switched) {
       setEditingTitle(false)
+      editingTitleRef.current = false
+      const restoredTitle = typeof draft?.data.title === 'string' ? draft.data.title : chapter?.title || ''
+      setTitle(restoredTitle)
+      titleRef.current = restoredTitle
+      setStatus(draft ? 'unsaved' : 'saved')
     }
-  }, [])
-
+  }, [key, chapter, project, setStatus])
+  useEffect(() => {
+    const saveNow = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        void saver.current().catch(() => {})
+      }
+    }
+    window.addEventListener('keydown', saveNow)
+    return () => {
+      window.removeEventListener('keydown', saveNow)
+      if (timer.current) clearTimeout(timer.current)
+      if (project) void chapterDrafts.flush(project).catch(() => {})
+    }
+  }, [project])
+  const create = async () => {
+    if (project) await useChapterStore.getState().createChapter(project, t('chapter.defaultTitle'))
+    useSidebarStore.getState().setActivePage('page-writing')
+  }
   return (
     <div className="flex-1 overflow-y-auto px-16 pb-32 pt-12 flex justify-center custom-scrollbar">
       <div
@@ -255,52 +204,74 @@ export function EditorContent() {
           <>
             {editingTitle ? (
               <input
-                className="font-display text-[36px] font-semibold leading-[1.25] tracking-[-0.01em] mb-[1.5em] w-full bg-transparent border-none outline-none text-[var(--ink)]"
-                style={{ fontFamily }}
-                value={titleDraft}
-                onChange={handleTitleChange}
-                onBlur={handleTitleSave}
-                onKeyDown={handleTitleKeyDown}
-                autoFocus
+                data-cloud-draft="title"
+                aria-label={t('editor.clickToEditTitle')}
+                className="font-display text-[36px] mb-[1.5em] w-full bg-transparent outline-none"
+                value={title}
+                onChange={(event) => {
+                  const value = event.target.value
+                  setTitle(value)
+                  titleRef.current = value
+                  if (project)
+                    queueChapterDraft({ project, num: chapter.num, volumeId: chapter.volumeId, data: { title: value } })
+                  setStatus('unsaved')
+                  schedule()
+                }}
+                onBlur={() => {
+                  setEditingTitle(false)
+                  editingTitleRef.current = false
+                  void saver.current().catch(() => {})
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') event.currentTarget.blur()
+                }}
               />
             ) : (
-              <h1
-                ref={titleRef}
-                className="font-display text-[36px] font-semibold leading-[1.25] tracking-[-0.01em] mb-[1.5em] cursor-pointer hover:text-[var(--accent-gold)] transition-colors"
-                onClick={handleTitleClick}
-                title={t('editor.clickToEditTitle')}
+              <button
+                type="button"
+                className="font-display text-[36px] font-semibold mb-[1.5em] text-left w-full bg-transparent"
+                onClick={() => {
+                  setTitle(chapter.title)
+                  titleRef.current = chapter.title
+                  setEditingTitle(true)
+                  editingTitleRef.current = true
+                }}
               >
-                {t('sidebar.chapterTitle', { num: chapter.num, title: chapter.title })}
-              </h1>
+                {t('sidebar.chapterTitle', { num: chapter.num, title: title || chapter.title })}
+              </button>
             )}
+            {/* biome-ignore lint/a11y/useSemanticElements: the rich text toolbar requires contenteditable. */}
             <div
-              ref={editorRef}
-              className="editor-body outline-none cursor-text"
+              ref={editor}
+              className="editor-body outline-none cursor-text whitespace-pre-wrap"
               contentEditable
+              tabIndex={0}
               suppressContentEditableWarning
-              onBlur={handleBlur}
-              onInput={handleInput}
-              onFocus={handleFocus}
+              role="textbox"
+              aria-label={t('editor.startWriting')}
+              aria-multiline="true"
+              onInput={changed}
+              onBlur={() => {
+                void saver.current().catch(() => {})
+              }}
+              onCompositionStart={() => {
+                composing.current = true
+                if (timer.current) clearTimeout(timer.current)
+              }}
+              onCompositionEnd={() => {
+                composing.current = false
+                changed()
+              }}
             />
           </>
         ) : (
           <div className="text-center pt-20">
             <p className="text-[var(--ink-mute)] mb-4">
-              {hasChapters ? t('editor.chooseChapter') : t('editor.noChaptersYet')}
+              {volumes.some((v) => v.chapters.length) ? t('editor.chooseChapter') : t('editor.noChaptersYet')}
             </p>
-            <button
-              className="h-[36px] px-6 rounded-lg border-none bg-[var(--accent-gold)] text-[var(--canvas)] font-medium text-[14px] cursor-pointer transition-colors hover:bg-[var(--accent-gold-soft)]"
-              onClick={handleNewChapter}
-            >
-              <span className="inline-flex items-center gap-1.5">
-                {hasChapters ? (
-                  t('editor.newChapter')
-                ) : (
-                  <>
-                    <Pen className="w-3.5 h-3.5" /> {t('editor.writeFirst')}
-                  </>
-                )}
-              </span>
+            <button type="button" className="btn-primary px-6 py-2" onClick={create}>
+              <Pen className="inline w-3.5 h-3.5 mr-2" />
+              {t('editor.writeFirst')}
             </button>
           </div>
         )}
