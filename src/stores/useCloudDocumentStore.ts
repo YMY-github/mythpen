@@ -5,6 +5,7 @@ export type CloudAccount = {
   account: string | null
   errorCode?: string
   message?: string
+  authorizationUrl?: string | null
 }
 export type CloudDocumentResult = {
   action: string

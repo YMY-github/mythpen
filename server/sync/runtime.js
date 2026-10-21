@@ -49,7 +49,7 @@ class SyncRuntime {
     this.initialize();
     if (await this.vault.get()) throw new Error('Disconnect before connecting a different account');
     const epoch=++this.epoch;
-    const flow=await this.oauth.begin();this.phase='connecting';this.message='';
+    const flow=await this.oauth.begin();this.phase='connecting';this.message='';this.authorizationUrl=flow.url;
     flow.result.then(async()=> {
       if(epoch!==this.epoch) return;
       const store=new GoogleDriveStore({getToken:()=>this.oauth.getToken()});
@@ -62,16 +62,16 @@ class SyncRuntime {
         const tokens=await this.vault.get();
         await this.vault.set({...tokens,accountId:user.permissionId,accountName:user.emailAddress || user.displayName});
       });
-      if(epoch===this.epoch) await this.activate();
+      if(epoch===this.epoch) {this.authorizationUrl=null;await this.activate();}
     }).catch(async error=> {
       if(epoch!==this.epoch) return;
-      this.phase='disconnected';this.message=publicError(error).message;this.errorCode=publicError(error).code;
+      this.authorizationUrl=null;this.phase='disconnected';this.message=publicError(error).message;this.errorCode=publicError(error).code;
       await this.oauth.disconnect().catch(()=>{});
     });
     return {url:flow.url};
   }
   async disconnect() {
-    ++this.epoch;this.phase='disconnecting';this.controller?.abort();
+    ++this.epoch;this.authorizationUrl=null;this.phase='disconnecting';this.controller?.abort();
     if(this.oauth) await this.oauth.disconnect();
     this.service=null;this.store=null;this.account=null;this.phase='disconnected';this.message='';this.oauth=null;
     return this.status();
@@ -81,7 +81,7 @@ class SyncRuntime {
     if(config && !['connecting','disconnecting'].includes(this.phase) && !this.service) {
       try {await this.activate();} catch(error) {if(!/Connect Google first/.test(error.message)) {const safe=publicError(error);this.message=safe.message;this.errorCode=safe.code;}}
     }
-    return {configured:!!config,clientId:config?.client_id || '',phase:this.phase,account:this.account || null,message:this.message,errorCode:this.message ? this.errorCode : null,automatic:true};
+    return {configured:!!config,clientId:config?.client_id || '',phase:this.phase,account:this.account || null,message:this.message,errorCode:this.message ? this.errorCode : null,automatic:true,authorizationUrl:this.phase==='connecting' ? this.authorizationUrl || null : null};
   }
   start() {
     this.unobserve=db.onProjectChanged(name => {

@@ -116,3 +116,68 @@ test('a local save alone never reports cloud success before an upload is confirm
   await act(async () => { useCloudDocumentStore.setState(state => ({ syncedVersion: state.editVersion })) })
   expect(container.textContent).toContain('已同步至 Google')
 })
+
+test('first Windows setup explains the missing client JSON and clicking connect gives actionable feedback', async () => {
+  const { CloudSyncPanel } = await import('../src/components/CloudSyncPanel')
+  const { useCloudDocumentStore } = await import('../src/stores/useCloudDocumentStore')
+  useCloudDocumentStore.setState({ account: { configured: false, phase: 'disconnected', account: null }, errorCode: null, result: null })
+  let connects = 0
+  globalThis.fetch = (async (url: string) => {
+    if (url.endsWith('/connect')) connects++
+    return Response.json({ configured: false, phase: 'disconnected', account: null })
+  }) as typeof fetch
+  await act(async () => { root.render(<CloudSyncPanel />) })
+  expect(container.textContent).toContain('请先导入与 Mac 相同的客户端 JSON')
+  const connect = [...container.querySelectorAll('button')].find(button => button.textContent?.includes('连接 Google'))!
+  expect(connect.disabled).toBe(false)
+  await act(async () => { connect.click(); await wait(10) })
+  expect(connects).toBe(0)
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain('请先选择上方的 Google 客户端 JSON')
+  expect(document.activeElement).toBe(container.querySelector('input[type="file"]'))
+})
+
+test('a failed native browser launch preserves the login flow, retry and copy link across settings remounts', async () => {
+  const { CloudSyncPanel } = await import('../src/components/CloudSyncPanel')
+  const { useCloudDocumentStore } = await import('../src/stores/useCloudDocumentStore')
+  const { mockIPC, clearMocks } = await import('@tauri-apps/api/mocks')
+  const url = 'https://accounts.google.com/o/oauth2/v2/auth?client_id=synthetic&state=synthetic&code_challenge=synthetic'
+  let connects = 0, opens = 0, clipboard = ''
+  const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { clipboard = text } } })
+  mockIPC((command, payload) => {
+    expect(command).toBe('plugin:shell|open')
+    expect((payload as {path: string}).path).toBe(url)
+    opens++
+    if (opens === 1) throw new Error('synthetic private launch failure')
+  })
+  useCloudDocumentStore.setState({ account: { configured: true, phase: 'disconnected', account: null }, errorCode: null, result: null })
+  globalThis.fetch = (async (route: string) => {
+    if (route.endsWith('/connect')) { connects++; return Response.json({ url }) }
+    if (route.endsWith('/disconnect')) return Response.json({})
+    return Response.json({ configured: true, phase: 'connecting', account: null, authorizationUrl: url })
+  }) as typeof fetch
+  try {
+    await act(async () => { root.render(<CloudSyncPanel />) })
+    const connect = [...container.querySelectorAll('button')].find(button => button.textContent?.includes('连接 Google'))!
+    await act(async () => { connect.click(); await wait(10) })
+    expect(container.textContent).toContain('未能打开系统浏览器')
+    expect(container.textContent).not.toContain('synthetic private launch failure')
+    expect((container.querySelector('input[readonly]') as HTMLInputElement).value).toBe(url)
+    // A new settings component recovers the same in-memory flow from status.
+    await act(async () => { root.render(<p>关闭设置</p>) })
+    await act(async () => { root.render(<CloudSyncPanel />) })
+    const reopen = [...container.querySelectorAll('button')].find(button => button.textContent?.includes('重新打开'))!
+    await act(async () => { reopen.click(); await wait(10) })
+    expect(opens).toBe(2)
+    expect(connects).toBe(1)
+    const copy = [...container.querySelectorAll('button')].find(button => button.textContent?.includes('复制授权链接'))!
+    await act(async () => { copy.click(); await wait(10) })
+    expect(clipboard).toBe(url)
+    expect(container.textContent).toContain('已复制链接')
+  } finally {
+    clearMocks()
+    delete (window as any).__TAURI_INTERNALS__
+    if (originalClipboard) Object.defineProperty(navigator, 'clipboard', originalClipboard)
+    else delete (navigator as any).clipboard
+  }
+})

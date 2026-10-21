@@ -28,3 +28,24 @@ test('diagnostics omit account names, tokens, project names and filesystem paths
  assert.equal(diagnostics.enabledProjects,1);assert.equal(diagnostics.resultCounts.error,1);
  for(const forbidden of ['private-account','private-client','private-manuscript','/private/user'])assert.ok(!text.includes(forbidden));
 });
+test('pending authorization can be reopened from status, and cancellation removes its URL',async()=>{
+ const r=runtime();r.vault.get=async()=>null;
+ const url='https://accounts.google.com/o/oauth2/v2/auth?state=synthetic';
+ let reject;
+ const result=new Promise((resolve,no)=>{reject=no;});
+ r.oauth={begin:async()=>({url,result}),disconnect:async()=>{reject(new Error('Authorization cancelled'));}};
+ assert.equal((await r.connect()).url,url);
+ const status=await r.status();assert.equal(status.phase,'connecting');assert.equal(status.authorizationUrl,url);
+ assert.ok(!JSON.stringify(r.diagnostics()).includes('state=synthetic'));
+ r.activate=async()=>{throw new Error('Connect Google first');};
+ const disconnected=await r.disconnect();assert.equal(disconnected.phase,'disconnected');assert.equal(disconnected.authorizationUrl,null);
+});
+test('failed authorization expires the pending URL instead of leaving a dead login link',async()=>{
+ const r=runtime();r.vault.get=async()=>null;
+ let reject;const result=new Promise((resolve,no)=>{reject=no;});
+ r.oauth={begin:async()=>({url:'https://accounts.google.com/o/oauth2/v2/auth?state=synthetic',result}),disconnect:async()=>{}};
+ await r.connect();reject(new Error('Authorization timed out'));
+ await new Promise(resolve=>setImmediate(resolve));
+ r.activate=async()=>{throw new Error('Connect Google first');};
+ const status=await r.status();assert.equal(status.phase,'disconnected');assert.equal(status.authorizationUrl,null);
+});

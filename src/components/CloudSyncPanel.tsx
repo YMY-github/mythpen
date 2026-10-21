@@ -1,5 +1,5 @@
 import { open } from '@tauri-apps/plugin-shell'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { cloudCall } from '@/lib/cloudDocuments'
 import { cloudErrorText } from '@/lib/cloudErrors'
 import { type CloudAccount, useCloudDocumentStore } from '@/stores/useCloudDocumentStore'
@@ -12,7 +12,10 @@ export function CloudSyncPanel() {
   const documentError = useCloudDocumentStore((s) => s.result?.errorCode)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [url, setUrl] = useState('')
+  const [browserError, setBrowserError] = useState('')
+  const [copied, setCopied] = useState(false)
+  const configInput = useRef<HTMLInputElement>(null)
+  const linkInput = useRef<HTMLInputElement>(null)
   async function action(fn: () => Promise<void>) {
     setBusy(true)
     setError('')
@@ -33,6 +36,20 @@ export function CloudSyncPanel() {
   }
   const connected = account?.phase === 'connected'
   const connecting = account?.phase === 'connecting'
+  const url = connecting ? account.authorizationUrl : undefined
+  async function openAuthorization(link: string) {
+    setBrowserError('')
+    try {
+      if ('__TAURI_INTERNALS__' in window) await open(link)
+      else window.open(link, '_blank', 'noopener,noreferrer')
+    } catch {
+      setBrowserError(
+        zh
+          ? '未能打开系统浏览器。请复制下面的授权链接，在这台电脑的浏览器中打开。'
+          : 'Could not open the system browser. Copy the authorization link below into a browser on this computer.',
+      )
+    }
+  }
   const button = 'px-4 py-2 rounded border border-[var(--hairline)] text-sm disabled:opacity-40'
   return (
     <section className="mb-7" aria-label={zh ? 'Google 云文档' : 'Google cloud documents'}>
@@ -53,6 +70,7 @@ export function CloudSyncPanel() {
             <label className="text-sm block mb-3">
               {zh ? '首次配置：导入 Google 客户端文件' : 'First setup: import Google client file'}
               <input
+                ref={configInput}
                 type="file"
                 accept=".json,application/json"
                 disabled={busy}
@@ -68,31 +86,97 @@ export function CloudSyncPanel() {
               />
             </label>
           )}
+          <p className="text-xs mb-3" role="status">
+            {!account?.configured
+              ? zh
+                ? '这台电脑尚未配置 Google 登录。请先导入与 Mac 相同的客户端 JSON，安装包不会携带此文件。'
+                : 'Google sign-in is not configured on this computer. Import the same client JSON as your other device; installers do not include it.'
+              : !connecting
+                ? zh
+                  ? '客户端配置已就绪。点击下方按钮，在系统浏览器中登录 Google。'
+                  : 'Client configuration is ready. Sign in with Google in your system browser below.'
+                : zh
+                  ? '请在这台电脑的浏览器中完成授权，再回到软件。浏览器未打开时，可重新打开或复制下方链接。'
+                  : 'Complete authorization in a browser on this computer, then return here. Reopen or copy the link below if needed.'}
+          </p>
           <button
             type="button"
             className={button}
-            disabled={busy || !account?.configured || connecting}
-            onClick={() =>
+            disabled={busy || connecting}
+            onClick={() => {
+              if (!account?.configured) {
+                configInput.current?.focus()
+                setError(
+                  zh
+                    ? '请先选择上方的 Google 客户端 JSON 文件，再连接 Google。'
+                    : 'Select the Google client JSON file above before connecting.',
+                )
+                return
+              }
               void action(async () => {
                 const login = await cloudCall<{ url: string }>('/connect', {})
-                setUrl(login.url)
-                if ('__TAURI_INTERNALS__' in window) await open(login.url)
-                else window.open(login.url, '_blank', 'noopener,noreferrer')
+                setCopied(false)
+                useCloudDocumentStore.setState({
+                  account: { ...account, phase: 'connecting', authorizationUrl: login.url },
+                })
+                await openAuthorization(login.url)
               })
-            }
+            }}
           >
-            {connecting
+            {busy
               ? zh
-                ? '等待 Google 授权…'
-                : 'Waiting for Google…'
-              : zh
-                ? '连接 Google，开启自动同步'
-                : 'Connect Google and sync'}
+                ? '正在处理…'
+                : 'Working…'
+              : connecting
+                ? zh
+                  ? '等待 Google 授权…'
+                  : 'Waiting for Google…'
+                : zh
+                  ? '连接 Google，开启自动同步'
+                  : 'Connect Google and sync'}
           </button>
           {connecting && url && (
-            <a href={url} target="_blank" rel="noreferrer" className="block underline text-xs mt-2">
-              {zh ? '打开授权页面' : 'Open authorization page'}
-            </a>
+            <div className="mt-3">
+              <div className="flex gap-3 mb-2">
+                <button type="button" className="underline text-xs" onClick={() => void openAuthorization(url)}>
+                  {zh ? '重新打开授权页面' : 'Reopen authorization page'}
+                </button>
+                <button
+                  type="button"
+                  className="underline text-xs"
+                  onClick={async () => {
+                    linkInput.current?.focus()
+                    linkInput.current?.select()
+                    try {
+                      await navigator.clipboard.writeText(url)
+                      setCopied(true)
+                    } catch {
+                      setBrowserError(
+                        zh
+                          ? '授权链接已选中，请按 Ctrl+C（Mac 为 ⌘C）复制，再粘贴到这台电脑的浏览器。'
+                          : 'Link selected. Press Ctrl+C (⌘C on Mac), then paste it into a browser on this computer.',
+                      )
+                    }
+                  }}
+                >
+                  {copied ? (zh ? '已复制链接' : 'Link copied') : zh ? '复制授权链接' : 'Copy authorization link'}
+                </button>
+              </div>
+              <input
+                ref={linkInput}
+                type="text"
+                readOnly
+                value={url}
+                aria-label={zh ? 'Google 授权链接' : 'Google authorization link'}
+                className="w-full text-xs p-2 rounded border border-[var(--hairline)] bg-transparent"
+                onFocus={(event) => event.currentTarget.select()}
+              />
+              {browserError && (
+                <p role="alert" className="text-xs mt-2">
+                  {browserError}
+                </p>
+              )}
+            </div>
           )}
         </>
       )}
@@ -114,7 +198,7 @@ export function CloudSyncPanel() {
           onClick={() =>
             void action(async () => {
               await cloudCall('/disconnect', {})
-              setUrl('')
+              setBrowserError('')
               useCloudDocumentStore.setState({ result: null })
             })
           }
