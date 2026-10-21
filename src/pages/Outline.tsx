@@ -1,5 +1,6 @@
 import { Check, Loader, Pen, Plus, Save, ScrollText, Sparkles } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { ExpandableTextarea } from '@/components/ExpandableTextarea'
 import { chapterDrafts, queueChapterDraft } from '@/lib/editorDrafts'
 import { useT } from '@/hooks/useT'
 import { aiApi, extractAIJsonObject, getAIResponseText } from '@/lib/api'
@@ -356,7 +357,7 @@ export function Outline() {
                 <label className="block text-[11px] font-medium text-[var(--ink-secondary)] tracking-[0.04em] uppercase mb-1">
                   {t('pages.outlineOverview')}
                 </label>
-                <textarea
+                <ExpandableTextarea
                   rows={3}
                   className="w-full bg-[var(--canvas-elevated)] border border-[var(--hairline)] rounded-[var(--radius-sm)] p-2.5 font-sans text-[13px] text-[var(--ink)] outline-none resize-vertical focus:border-[var(--accent-gold)]"
                   value={outlineText}
@@ -463,7 +464,7 @@ function FiveDimField({
       <label className="block text-[11px] font-medium text-[var(--ink-secondary)] tracking-[0.04em] uppercase mb-1">
         {label}
       </label>
-      <textarea
+      <ExpandableTextarea
         data-cloud-draft="dimension"
         rows={2}
         className="w-full bg-[var(--canvas-elevated)] border border-[var(--hairline)] rounded-[var(--radius-sm)] p-2 font-sans text-[13px] text-[var(--ink)] outline-none resize-vertical min-h-[50px] focus:border-[var(--accent-gold)]"

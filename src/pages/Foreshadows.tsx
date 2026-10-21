@@ -1,3 +1,4 @@
+import { ElementDetailsButton, useElementDetails, useElementFields } from '@/components/EntityDetailsDialog'
 import type { LucideIcon } from 'lucide-react'
 import { CheckCircle2, Link2, Loader, Pin, Plus, RefreshCw, Target } from 'lucide-react'
 import { useState } from 'react'
@@ -17,6 +18,7 @@ const COLUMNS: Column[] = [
   { key: 'planted', icon: Pin, label: 'foreshadow.planted' },
   { key: 'progressing', icon: RefreshCw, label: 'foreshadow.progressing' },
   { key: 'resolved', icon: CheckCircle2, label: 'foreshadow.resolved' },
+  { key: 'abandoned', icon: CheckCircle2, label: 'foreshadow.abandoned' },
 ]
 
 export function Foreshadows() {
@@ -25,6 +27,8 @@ export function Foreshadows() {
   const { chapters } = useChapters()
   const { t } = useT()
   const project = useProjectName()
+  const details = useElementDetails('foreshadows', project, reload)
+  const fields = useElementFields('foreshadows')
   const [showCreate, setShowCreate] = useState(false)
   const [generating, setGenerating] = useState(false)
 
@@ -63,7 +67,7 @@ export function Foreshadows() {
     setGenerating(false)
   }
 
-  if (loading)
+  if (loading && !foreshadows)
     return <div className="flex-1 flex items-center justify-center text-[var(--ink-mute)]">{t('common.loading')}</div>
 
   const list = foreshadows || []
@@ -87,6 +91,7 @@ export function Foreshadows() {
 
   return (
     <>
+      {details.dialog}
       <div className="page-header">
         <h2 className="flex items-center gap-2">
           <Link2 className="w-5 h-5" /> {t('pages.foreshadowBoard')}
@@ -114,41 +119,13 @@ export function Foreshadows() {
       {showCreate && (
         <SimpleCreateDialog
           title={`+ ${t('pages.manualAdd')}`}
-          fields={[
-            {
-              key: 'title',
-              label: t('foreshadow.titleField'),
-              required: true,
-              placeholder: t('foreshadow.titlePlaceholder'),
-            },
-            {
-              key: 'description',
-              label: t('foreshadow.descriptionField'),
-              type: 'textarea',
-              placeholder: t('foreshadow.descriptionPlaceholder'),
-            },
-            {
-              key: 'priority',
-              label: t('foreshadow.priorityField'),
-              type: 'select',
-              options: [
-                { value: 'high', label: t('foreshadow.priorityHigh') },
-                { value: 'normal', label: t('foreshadow.priorityNormal') },
-                { value: 'low', label: t('foreshadow.priorityLow') },
-              ],
-            },
-            {
-              key: 'status',
-              label: t('foreshadow.statusField'),
-              type: 'select',
-              options: [
-                { value: 'planted', label: t('foreshadow.planted') },
-                { value: 'progressing', label: t('foreshadow.progressing') },
-              ],
-            },
-          ]}
+          fields={fields}
+          initialValues={{ status: 'planted', priority: 'normal' }}
           onSubmit={async (vals) => {
-            await foreshadowsApi.create(project, vals)
+            await foreshadowsApi.create(project, {
+              ...vals,
+              expected_resolve_chapter: Number(vals.expected_resolve_chapter || 0),
+            })
             reload()
           }}
           onClose={() => setShowCreate(false)}
@@ -186,7 +163,7 @@ export function Foreshadows() {
                   .map((f: any) => (
                     <div
                       key={f.id}
-                      className="bg-[var(--canvas-card)] border border-[var(--hairline)] rounded-[var(--radius-sm)] p-2.5 mb-1.5 cursor-pointer transition-colors hover:border-[var(--hairline-light)]"
+                      className="bg-[var(--canvas-card)] border border-[var(--hairline)] rounded-[var(--radius-sm)] p-2.5 mb-1.5 transition-colors hover:border-[var(--hairline-light)]"
                     >
                       <div className="text-[13px] text-[var(--ink)] flex items-center gap-1.5">
                         <span
@@ -198,6 +175,7 @@ export function Foreshadows() {
                       {f.description && (
                         <div className="text-[12px] text-[var(--ink-tertiary)] mt-1 line-clamp-2">{f.description}</div>
                       )}
+                      <ElementDetailsButton onClick={() => details.open(f)} />
                       {f.expected_resolve_chapter > 0 && (
                         <div className="text-[10px] text-[var(--ink-mute)] mt-1 font-mono">
                           {t('foreshadow.expectedResolve', { n: f.expected_resolve_chapter })}

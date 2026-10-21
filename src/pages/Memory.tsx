@@ -1,3 +1,4 @@
+import { ElementDetailsButton, useElementDetails } from '@/components/EntityDetailsDialog'
 import { Brain, Loader, Search, Sparkles, X } from 'lucide-react'
 import { useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
@@ -31,6 +32,11 @@ export function Memory() {
   const [searchResults, setSearchResults] = useState<any[] | null>(null)
   const [searching, setSearching] = useState(false)
   const [extracting, setExtracting] = useState(false)
+  const details = useElementDetails('memories', project, () => {
+    setSearchResults(null)
+    reload()
+  })
+
 
   const handleSearch = async () => {
     if (!project || !searchQuery.trim()) return
@@ -85,11 +91,12 @@ export function Memory() {
 
   const displayList = searchResults !== null ? searchResults : memories || []
 
-  if (loading)
+  if (loading && !memories)
     return <div className="flex-1 flex items-center justify-center text-[var(--ink-mute)]">{t('common.loading')}</div>
 
   return (
     <>
+      {details.dialog}
       <div className="page-header">
         <h2 className="flex items-center gap-2">
           <Brain className="w-5 h-5" /> {t('pages.narrativeMemory')}
@@ -175,7 +182,10 @@ export function Memory() {
                 >
                   {t(CAT_LABELS[m.category] || m.category)}
                 </span>
-                <div className="text-[13px] text-[var(--ink-secondary)] leading-[1.6]">{m.content}</div>
+                <div className="text-[13px] text-[var(--ink-secondary)] leading-[1.6] line-clamp-3 whitespace-pre-wrap break-words">
+                  {m.content}
+                </div>
+                <ElementDetailsButton onClick={() => details.open(m)} />
                 <div className="text-[11px] text-[var(--ink-mute)] mt-2 font-mono">
                   {m.source_chapter_id ? t('memory.sourceChapter', { n: m.source_chapter_id }) : ''}
                 </div>

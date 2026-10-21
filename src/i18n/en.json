@@ -431,7 +431,8 @@
     "priorityNormal": "Normal",
     "priorityLow": "Low",
     "statusField": "Status",
-    "expectedResolve": "Expected resolve: Ch. {n}"
+    "expectedResolve": "Expected resolve: Ch. {n}",
+    "abandoned": "Abandoned"
   },
   "memory": {
     "aiPrompt": "You are a narrative memory extraction assistant. Extract important narrative memories from novel chapters that affect future plot developments. Return a JSON array.",
@@ -578,5 +579,42 @@
   },
   "cloud": {
     "open": "Cloud projects and sync"
+  },
+  "elements": {
+    "edit": "Edit",
+    "save": "Save changes",
+    "viewEdit": "Read / Edit",
+    "close": "Close",
+    "expand": "Expand editor",
+    "collapse": "Collapse editor",
+    "fullscreen": "Full screen",
+    "restoreSize": "Restore size",
+    "unsaved": "You have unsaved changes. Discard them?",
+    "keepEditing": "Keep editing",
+    "discard": "Discard and close",
+    "saveFailed": "Save failed. Please retry.",
+    "invalidNumber": "Enter an integer within the allowed range for “{label}”.",
+    "extMarkers": "External markers",
+    "notes": "Notes",
+    "tags": "Tags",
+    "references": "References",
+    "expectedChapter": "Expected resolution chapter (0 = unspecified)",
+    "category": "Category",
+    "content": "Content",
+    "characterA": "Character A",
+    "characterB": "Character B",
+    "relationType": "Relationship type",
+    "description": "Description",
+    "intensity": "Intensity (1–5)",
+    "startedAt": "Started at",
+    "endedAt": "Ended at",
+    "characters": "Character details",
+    "world": "World details",
+    "science": "Science details",
+    "foreshadows": "Foreshadow details",
+    "relations": "Relationship details",
+    "memories": "Memory details",
+    "timeline": "Timeline details",
+    "chapterCount": "Chapter appearances"
   }
 }

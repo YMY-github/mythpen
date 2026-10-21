@@ -431,7 +431,8 @@
     "priorityNormal": "普通",
     "priorityLow": "低",
     "statusField": "状态",
-    "expectedResolve": "预期回收: 第{n}章"
+    "expectedResolve": "预期回收: 第{n}章",
+    "abandoned": "已放弃"
   },
   "memory": {
     "aiPrompt": "你是一个叙事记忆提取助手。从小说章节内容中提取重要的叙事记忆——对后续情节有影响的情节承诺、角色线索、设定关键点。每个记忆用一句话概括。直接返回JSON数组，格式：[{\"category\":\"character|location|item|event|promise|other\",\"content\":\"...\"}]，不要前缀说明。",
@@ -578,5 +579,42 @@
   },
   "cloud": {
     "open": "云端作品与同步"
+  },
+  "elements": {
+    "edit": "编辑",
+    "save": "保存修改",
+    "viewEdit": "查看全文 / 编辑",
+    "close": "关闭",
+    "expand": "展开编辑",
+    "collapse": "收起编辑",
+    "fullscreen": "全屏",
+    "restoreSize": "还原大小",
+    "unsaved": "有尚未保存的修改，是否放弃？",
+    "keepEditing": "继续编辑",
+    "discard": "放弃修改并关闭",
+    "saveFailed": "保存失败，请重试",
+    "invalidNumber": "「{label}」请输入范围内的整数",
+    "extMarkers": "外在标记",
+    "notes": "备注",
+    "tags": "标签",
+    "references": "参考资料",
+    "expectedChapter": "预计回收章节（0 表示未指定）",
+    "category": "分类",
+    "content": "内容",
+    "characterA": "角色 A",
+    "characterB": "角色 B",
+    "relationType": "关系类型",
+    "description": "详细说明",
+    "intensity": "关系强度（1–5）",
+    "startedAt": "开始时间",
+    "endedAt": "结束时间",
+    "characters": "角色详情",
+    "world": "世界观详情",
+    "science": "科学设定详情",
+    "foreshadows": "伏笔详情",
+    "relations": "人物关系详情",
+    "memories": "叙事记忆详情",
+    "timeline": "时间线详情",
+    "chapterCount": "出场章节数"
   }
 }

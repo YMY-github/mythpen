@@ -1,7 +1,7 @@
 {
   "name": "Mythpen",
   "private": true,
-  "version": "0.0.11",
+  "version": "0.0.12",
   "author": "Nico",
   "license": "CC BY-NC-SA 4.0",
   "packageManager": "pnpm@10.10.0",
@@ -31,7 +31,7 @@
     "test:sidecar": "node scripts/smoke-sidecar.mjs",
     "dev:desktop": "concurrently \"pnpm dev\" \"pnpm dev:server\"",
     "test:sync": "node --test server/test/*.test.js",
-    "test:editor": "bun test --tsconfig-override ./tsconfig.app.json tests/editor.test.tsx"
+    "test:editor": "bun test --tsconfig-override ./tsconfig.app.json tests/editor.test.tsx && bun test --tsconfig-override ./tsconfig.app.json tests/elements.test.tsx"
   },
   "lint-staged": {
     "*.{ts,tsx}": [

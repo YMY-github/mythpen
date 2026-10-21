@@ -70,6 +70,7 @@ export function startCloudDocuments() {
           ['uploaded', 'synced'].includes(result.action) && !result.pending ? checkedVersion : state.syncedVersion,
       }))
       if (result.action !== 'download-ready') return
+      if (document.querySelector('[data-unsaved-form="true"]')) return
       // Defer while another form has focus; its unsubmitted fields are not a
       // saved document yet. Chapter text/title and outline have durable savers.
       const active = document.activeElement
@@ -80,6 +81,7 @@ export function startCloudDocuments() {
       if (
         useProjectStore.getState().currentProject !== name ||
         chapterDrafts.pending(name) ||
+        !!document.querySelector('[data-unsaved-form="true"]') ||
         useAgentStore.getState().isRunning
       )
         return

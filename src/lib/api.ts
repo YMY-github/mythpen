@@ -86,6 +86,8 @@ export const volumesApi = {
 // ─── Characters ───
 
 export const charactersApi = {
+  update: (project: string, id: string, data: Record<string, unknown>) =>
+    request(`/${encodeURIComponent(project)}/characters/${encodeURIComponent(id)}`, { method: 'PUT', body: data }),
   list: (project: string) => request(`/${encodeURIComponent(project)}/characters`),
   create: (project: string, data: any) =>
     request(`/${encodeURIComponent(project)}/characters`, { method: 'POST', body: data }),
@@ -94,6 +96,8 @@ export const charactersApi = {
 // ─── World ───
 
 export const worldApi = {
+  update: (project: string, id: string, data: Record<string, unknown>) =>
+    request(`/${encodeURIComponent(project)}/world/${encodeURIComponent(id)}`, { method: 'PUT', body: data }),
   list: (project: string) => request(`/${encodeURIComponent(project)}/world`),
   create: (project: string, data: any) =>
     request(`/${encodeURIComponent(project)}/world`, { method: 'POST', body: data }),
@@ -102,6 +106,8 @@ export const worldApi = {
 // ─── Science ───
 
 export const scienceApi = {
+  update: (project: string, id: string, data: Record<string, unknown>) =>
+    request(`/${encodeURIComponent(project)}/science/${encodeURIComponent(id)}`, { method: 'PUT', body: data }),
   list: (project: string) => request(`/${encodeURIComponent(project)}/science`),
   create: (project: string, data: any) =>
     request(`/${encodeURIComponent(project)}/science`, { method: 'POST', body: data }),
@@ -110,6 +116,8 @@ export const scienceApi = {
 // ─── Foreshadows ───
 
 export const foreshadowsApi = {
+  update: (project: string, id: string, data: Record<string, unknown>) =>
+    request(`/${encodeURIComponent(project)}/foreshadows/${encodeURIComponent(id)}`, { method: 'PUT', body: data }),
   list: (project: string, status?: string) => {
     const qs = status ? `?status=${encodeURIComponent(status)}` : ''
     return request(`/${encodeURIComponent(project)}/foreshadows${qs}`)
@@ -121,6 +129,8 @@ export const foreshadowsApi = {
 // ─── Relations ───
 
 export const relationsApi = {
+  update: (project: string, id: string, data: Record<string, unknown>) =>
+    request(`/${encodeURIComponent(project)}/relations/${encodeURIComponent(id)}`, { method: 'PUT', body: data }),
   list: (project: string) => request(`/${encodeURIComponent(project)}/relations`),
   create: (project: string, data: any) =>
     request(`/${encodeURIComponent(project)}/relations`, { method: 'POST', body: data }),
@@ -129,6 +139,8 @@ export const relationsApi = {
 // ─── Memories ───
 
 export const memoriesApi = {
+  update: (project: string, id: string, data: Record<string, unknown>) =>
+    request(`/${encodeURIComponent(project)}/memories/${encodeURIComponent(id)}`, { method: 'PUT', body: data }),
   list: (project: string) => request(`/${encodeURIComponent(project)}/memories`),
   create: (project: string, data: any) =>
     request(`/${encodeURIComponent(project)}/memories`, { method: 'POST', body: data }),
@@ -139,6 +151,8 @@ export const memoriesApi = {
 // ─── Timeline ───
 
 export const timelineApi = {
+  update: (project: string, id: string, data: Record<string, unknown>) =>
+    request(`/${encodeURIComponent(project)}/timeline/${encodeURIComponent(id)}`, { method: 'PUT', body: data }),
   list: (project: string) => request(`/${encodeURIComponent(project)}/timeline`),
   create: (project: string, data: any) =>
     request(`/${encodeURIComponent(project)}/timeline`, { method: 'POST', body: data }),

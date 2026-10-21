@@ -16,13 +16,51 @@ function updateRecord(projectName, table, id, body, allowedFields, addUpdatedAt)
   const fields = []; const params = [];
   const data = body || {};
   for (const key of allowedFields) {
-    if (data[key] !== undefined) { fields.push(`${key} = ?`); params.push(data[key]); }
+    if (data[key] !== undefined) { fields.push(`"${key}" = ?`); params.push(data[key]); }
   }
   if (fields.length === 0) return null;
   if (addUpdatedAt) fields.push("updated_at = datetime('now')");
   params.push(id);
   const changes = db.projectExecute(projectName, `UPDATE ${table} SET ${fields.join(', ')} WHERE id = ?`, params);
   return changes;
+}
+
+// Every editable element uses the same partial-update contract. Only supplied,
+// whitelisted fields change; IDs, chapter links and creation metadata survive.
+const elementUpdates = {
+  characters: { table: 'characters', fields: ['name','age','gender','appearance','personality','background','motivation','arc','ext_markers','notes'], required: ['name'], timestamp: true },
+  world: { table: 'world_entries', fields: ['category','name','description','tags'], required: ['category','name'], timestamp: true },
+  science: { table: 'science_entries', fields: ['label','name','description','references'], required: ['name'], enums: { label: ['known','extrapolation','hypothesis'] }, timestamp: true },
+  foreshadows: { table: 'foreshadows', fields: ['title','description','priority','status','expected_resolve_chapter'], required: ['title'], enums: { priority: ['low','normal','high'], status: ['planted','progressing','resolved','abandoned'] }, numbers: { expected_resolve_chapter: [0, Number.MAX_SAFE_INTEGER] }, timestamp: true },
+  relations: { table: 'character_relations', fields: ['character_a_id','character_b_id','relation_type','description','intensity','started_at','ended_at'], required: ['character_a_id','character_b_id','relation_type'], numbers: { intensity: [1,5] } },
+  memories: { table: 'memories', fields: ['category','content'], required: ['content'], enums: { category: ['character','location','item','event','promise','other'] } },
+  timeline: { table: 'timeline_events', fields: ['year','title','description','importance'], required: ['year','title'], numbers: { importance: [1,5] } },
+};
+for (const [resource, config] of Object.entries(elementUpdates)) {
+  router.put(`/:project/${resource}/:id`, (req, res) => {
+    const body = req.body;
+    const invalid = message => res.status(400).json({ error: { code: 'INVALID_PARAMS', message, recoverable: true } });
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return invalid('缺少修改内容');
+    for (const field of config.fields) {
+      if (body[field] === undefined) continue;
+      const range = config.numbers?.[field];
+      if (range) {
+        if (!Number.isSafeInteger(body[field]) || body[field] < range[0] || body[field] > range[1]) return invalid(`字段 ${field} 必须是范围内的整数`);
+      } else if (typeof body[field] !== 'string') return invalid(`字段 ${field} 必须是文本`);
+      if (config.required?.includes(field) && !body[field].trim()) return invalid(`字段 ${field} 不能为空`);
+      if (config.enums?.[field] && !config.enums[field].includes(body[field])) return invalid(`字段 ${field} 的值无效`);
+    }
+    const pn = project(req.params.project);
+    if (resource === 'relations') {
+      for (const field of ['character_a_id','character_b_id']) {
+        if (body[field] !== undefined && !db.projectGet(pn, 'SELECT id FROM characters WHERE id = ?', [body[field]])) return invalid('关联角色不存在');
+      }
+    }
+    const changes = updateRecord(pn, config.table, req.params.id, body, config.fields, !!config.timestamp);
+    if (changes === null) return invalid('没有要更新的字段');
+    if (changes === 0) return res.status(404).json({ error: { code: 'DB_NOT_FOUND', message: '条目不存在', recoverable: true } });
+    res.json({ success: true });
+  });
 }
 
 // ═══════════════════════════════════════════
@@ -270,27 +308,14 @@ router.get('/:project/characters/:id', (req, res) => {
 });
 
 router.post('/:project/characters', (req, res) => {
-  const { name, age = '', gender = '', appearance = '', personality = '', background = '', motivation = '', arc = '', ext_markers = '' } = req.body || {};
+  const { name, age = '', gender = '', appearance = '', personality = '', background = '', motivation = '', arc = '', ext_markers = '', notes = '' } = req.body || {};
   if (!name) return res.status(400).json({ error: { code: 'INVALID_PARAMS', message: '角色名不能为空', recoverable: true } });
   const id = randomUUID();
   db.projectExecute(project(req.params.project),
-    'INSERT INTO characters (id, name, age, gender, appearance, personality, background, motivation, arc, ext_markers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, name, age, gender, appearance, personality, background, motivation, arc, ext_markers]
+    'INSERT INTO characters (id, name, age, gender, appearance, personality, background, motivation, arc, ext_markers, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, name, age, gender, appearance, personality, background, motivation, arc, ext_markers, notes]
   );
   res.status(201).json({ id, name });
-});
-
-router.put('/:project/characters/:id', (req, res) => {
-  const { id } = req.params;
-  const fields = []; const params = [];
-  for (const key of ['name', 'age', 'gender', 'appearance', 'personality', 'background', 'motivation', 'arc', 'ext_markers', 'notes']) {
-    if (req.body[key] !== undefined) { fields.push(`${key} = ?`); params.push(req.body[key]); }
-  }
-  if (fields.length === 0) return res.status(400).json({ error: { code: 'INVALID_PARAMS', message: '没有要更新的字段', recoverable: true } });
-  fields.push("updated_at = datetime('now')");
-  params.push(id);
-  db.projectExecute(project(req.params.project), `UPDATE characters SET ${fields.join(', ')} WHERE id = ?`, params);
-  res.json({ success: true });
 });
 
 router.delete('/:project/characters/:id', (req, res) => {
@@ -316,13 +341,6 @@ router.post('/:project/world', (req, res) => {
     [id, category, name, description, tags]
   );
   res.status(201).json({ id, name });
-});
-
-router.put('/:project/world/:id', (req, res) => {
-  const changes = updateRecord(project(req.params.project), 'world_entries', req.params.id, req.body, ['category', 'name', 'description', 'tags'], true);
-  if (changes === null) return res.status(400).json({ error: { message: '没有要更新的字段' } });
-  if (changes === 0) return res.status(404).json({ error: { message: '条目不存在' } });
-  res.json({ success: true });
 });
 
 router.delete('/:project/world/:id', (req, res) => {
@@ -399,13 +417,6 @@ router.post('/:project/relations', (req, res) => {
   res.status(201).json({ id });
 });
 
-router.put('/:project/relations/:id', (req, res) => {
-  const changes = updateRecord(project(req.params.project), 'character_relations', req.params.id, req.body, ['relation_type', 'description', 'intensity'], false);
-  if (changes === null) return res.status(400).json({ error: { message: '没有要更新的字段' } });
-  if (changes === 0) return res.status(404).json({ error: { message: '关系不存在' } });
-  res.json({ success: true });
-});
-
 router.delete('/:project/relations/:id', (req, res) => {
   const changes = db.projectExecute(project(req.params.project), 'DELETE FROM character_relations WHERE id = ?', [req.params.id]);
   if (changes === 0) return res.status(404).json({ error: { message: '关系不存在' } });
@@ -429,13 +440,6 @@ router.post('/:project/memories', (req, res) => {
     [id, category, content, source_chapter_id || null]
   );
   res.status(201).json({ id });
-});
-
-router.put('/:project/memories/:id', (req, res) => {
-  const changes = updateRecord(project(req.params.project), 'memories', req.params.id, req.body, ['category', 'content'], false);
-  if (changes === null) return res.status(400).json({ error: { message: '没有要更新的字段' } });
-  if (changes === 0) return res.status(404).json({ error: { message: '记忆不存在' } });
-  res.json({ success: true });
 });
 
 router.delete('/:project/memories/:id', (req, res) => {
@@ -473,13 +477,6 @@ router.post('/:project/timeline', (req, res) => {
     [id, year, title, description, importance]
   );
   res.status(201).json({ id, title });
-});
-
-router.put('/:project/timeline/:id', (req, res) => {
-  const changes = updateRecord(project(req.params.project), 'timeline_events', req.params.id, req.body, ['year', 'title', 'description', 'importance'], false);
-  if (changes === null) return res.status(400).json({ error: { message: '没有要更新的字段' } });
-  if (changes === 0) return res.status(404).json({ error: { message: '事件不存在' } });
-  res.json({ success: true });
 });
 
 router.delete('/:project/timeline/:id', (req, res) => {

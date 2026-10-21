@@ -1,3 +1,4 @@
+import { ElementDetailsButton, useElementDetails } from '@/components/EntityDetailsDialog'
 import { HeartHandshake, Link2, Loader, Plus, RefreshCcw, Sparkles, Users } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { useDataRefresh } from '@/hooks/useDataRefresh'
@@ -105,11 +106,13 @@ function computeCircleLayout(
 }
 
 export function Relations() {
-  const { data: characters, loading: charsLoading } = useCharacters()
+  const { data: characters, loading: charsLoading, reload: reloadChars } = useCharacters()
   const { data: relations, loading: relsLoading, reload: reloadRels } = useRelations()
   useDataRefresh('relation', reloadRels)
+  useDataRefresh('character', reloadChars)
   const { t } = useT()
   const project = useProjectName()
+  const details = useElementDetails('relations', project, reloadRels, characters || [])
   const [layoutSeed, setLayoutSeed] = useState(0)
   const [organizing, setOrganizing] = useState(false)
   const [orgMsg, setOrgMsg] = useState('')
@@ -201,7 +204,7 @@ export function Relations() {
     setOrganizing(false)
   }
 
-  if (loading) {
+  if (loading && !relations) {
     return <div className="flex-1 flex items-center justify-center text-[var(--ink-mute)]">{t('common.loading')}</div>
   }
 
@@ -228,6 +231,7 @@ export function Relations() {
 
   return (
     <>
+      {details.dialog}
       <div className="page-header">
         <h2 className="flex items-center gap-2">
           <HeartHandshake className="w-5 h-5" /> {t('pages.relationGraph')}
@@ -423,6 +427,20 @@ export function Relations() {
             {orgMsg && <div className="text-[11px] text-[var(--ink-tertiary)] mt-2 text-center">{orgMsg}</div>}
           </div>
 
+          <div className="bg-[var(--canvas-card)] border border-[var(--hairline)] rounded-lg p-3">
+            <h3 className="text-sm mb-2">{t('elements.relations')}</h3>
+            {rels.map((relation: any) => (
+              <div key={relation.id} className="border-t border-[var(--hairline)] py-3 break-words">
+                <div className="text-xs">
+                  {chars.find((c) => c.id === relation.character_a_id)?.name || relation.character_a_id} →{' '}
+                  {chars.find((c) => c.id === relation.character_b_id)?.name || relation.character_b_id}
+                </div>
+                <div className="text-sm">{relation.relation_type}</div>
+                <div className="text-xs line-clamp-2 whitespace-pre-wrap">{relation.description}</div>
+                <ElementDetailsButton onClick={() => details.open(relation)} />
+              </div>
+            ))}
+          </div>
           {/* Character stats */}
           <div className="bg-[var(--canvas-card)] border border-[var(--hairline)] rounded-lg p-3">
             <div className="text-[11px] font-medium text-[var(--ink-secondary)] tracking-[0.04em] uppercase mb-2 flex items-center gap-1.5">

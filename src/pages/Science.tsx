@@ -1,3 +1,4 @@
+import { ElementDetailsButton, useElementDetails, useElementFields } from '@/components/EntityDetailsDialog'
 import { FlaskConical } from 'lucide-react'
 import { useState } from 'react'
 import { SimpleCreateDialog } from '@/components/SimpleCreateDialog'
@@ -15,19 +16,22 @@ export function Science() {
   const [showCreate, setShowCreate] = useState(false)
   const { t } = useT()
   const project = useProjectName()
+  const details = useElementDetails('science', project, reload)
+  const fields = useElementFields('science')
   const labelMap: Record<string, { text: string; color: string; bg: string }> = {
     known: { text: t('science.known'), color: 'var(--success)', bg: 'var(--success-soft)' },
     extrapolation: { text: t('science.extrapolation'), color: 'var(--warning)', bg: 'var(--warning-soft)' },
     hypothesis: { text: t('science.hypothesis'), color: 'var(--error)', bg: 'var(--error-soft)' },
   }
 
-  if (loading)
+  if (loading && !entries)
     return <div className="flex-1 flex items-center justify-center text-[var(--ink-mute)]">{t('common.loading')}</div>
 
   const filtered = filter === 'all' ? entries || [] : (entries || []).filter((e) => e.label === filter)
 
   return (
     <>
+      {details.dialog}
       <div className="page-header">
         <h2 className="flex items-center gap-2">
           <FlaskConical className="w-5 h-5" /> {t('pages.scienceSettings')}
@@ -54,26 +58,7 @@ export function Science() {
       {showCreate && (
         <SimpleCreateDialog
           title={`+ ${t('pages.newSetting')}`}
-          fields={[
-            {
-              key: 'label',
-              label: t('science.category'),
-              type: 'select',
-              required: true,
-              options: [
-                { value: 'known', label: t('science.knownLabel') },
-                { value: 'extrapolation', label: t('science.extrapolationLabel') },
-                { value: 'hypothesis', label: t('science.hypothesisLabel') },
-              ],
-            },
-            { key: 'name', label: t('science.name'), required: true, placeholder: t('science.namePlaceholder') },
-            {
-              key: 'description',
-              label: t('science.description'),
-              type: 'textarea',
-              placeholder: t('science.descriptionPlaceholder'),
-            },
-          ]}
+          fields={fields}
           onSubmit={async (vals) => {
             await scienceApi.create(project, vals)
             reload()
@@ -89,7 +74,7 @@ export function Science() {
             return (
               <div
                 key={entry.id}
-                className="bg-[var(--canvas-card)] border border-[var(--hairline)] rounded-lg p-4 cursor-pointer transition-colors hover:border-[var(--hairline-light)] hover:bg-[var(--canvas-elevated)]"
+                className="bg-[var(--canvas-card)] border border-[var(--hairline)] rounded-lg p-4 transition-colors hover:border-[var(--hairline-light)] hover:bg-[var(--canvas-elevated)]"
               >
                 <span className="text-[10px] px-[6px] py-[1px] rounded-full bg-[var(--canvas-mid)] text-[var(--ink-tertiary)] inline-block mb-1.5">
                   {entry.label === 'known'
@@ -105,7 +90,10 @@ export function Science() {
                 >
                   {lm.text}
                 </span>
-                <div className="text-[13px] text-[var(--ink-tertiary)] mt-1">{entry.description}</div>
+                <div className="text-[13px] text-[var(--ink-tertiary)] mt-1 line-clamp-3 whitespace-pre-wrap break-words">
+                  {entry.description}
+                </div>
+                <ElementDetailsButton onClick={() => details.open(entry)} />
               </div>
             )
           })}

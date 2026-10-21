@@ -1,3 +1,4 @@
+import { ElementDetailsButton, useElementDetails, useElementFields } from '@/components/EntityDetailsDialog'
 import { CalendarDays, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { SimpleCreateDialog } from '@/components/SimpleCreateDialog'
@@ -11,13 +12,16 @@ export function Timeline() {
   useDataRefresh('timeline', reload)
   const { t } = useT()
   const project = useProjectName()
+  const details = useElementDetails('timeline', project, reload)
+  const fields = useElementFields('timeline')
   const [showCreate, setShowCreate] = useState(false)
 
-  if (loading)
+  if (loading && !events)
     return <div className="flex-1 flex items-center justify-center text-[var(--ink-mute)]">{t('common.loading')}</div>
 
   return (
     <>
+      {details.dialog}
       <div className="page-header">
         <h2 className="flex items-center gap-2">
           <CalendarDays className="w-5 h-5" /> {t('pages.timeline')}
@@ -36,33 +40,13 @@ export function Timeline() {
       {showCreate && (
         <SimpleCreateDialog
           title={`+ ${t('pages.newEvent')}`}
-          fields={[
-            { key: 'year', label: t('timeline.yearLabel'), required: true, placeholder: t('timeline.yearPlaceholder') },
-            {
-              key: 'title',
-              label: t('timeline.titleLabel'),
-              required: true,
-              placeholder: t('timeline.titlePlaceholder'),
-            },
-            {
-              key: 'description',
-              label: t('timeline.descriptionLabel'),
-              type: 'textarea',
-              placeholder: t('timeline.descriptionPlaceholder'),
-            },
-            {
-              key: 'importance',
-              label: t('timeline.importanceLabel'),
-              type: 'number',
-              placeholder: t('timeline.importancePlaceholder'),
-            },
-          ]}
+          fields={fields}
           onSubmit={async (vals) => {
             await timelineApi.create(project, {
               year: vals.year,
               title: vals.title,
               description: vals.description,
-              importance: parseInt(vals.importance) || 3,
+              importance: Number(vals.importance || 3),
             })
             reload()
           }}
@@ -95,7 +79,10 @@ export function Timeline() {
                     ))}
                   </span>
                 </div>
-                <div className="text-[13px] text-[var(--ink-tertiary)] leading-[1.6]">{ev.description}</div>
+                <div className="text-[13px] text-[var(--ink-tertiary)] leading-[1.6] line-clamp-3 whitespace-pre-wrap break-words">
+                  {ev.description}
+                </div>
+                <ElementDetailsButton onClick={() => details.open(ev)} />
               </div>
             </div>
           ))}
